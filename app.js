@@ -264,8 +264,16 @@ async function telaEditorOrcamento(id) {
       const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) throw new Error('não encontrado');
       const d = await r.json();
       $('#nome').value = d.razao_social || d.nome_fantasia || '';
-      if (d.ddd_telefone_1 && !$('#fone').value) $('#fone').value = d.ddd_telefone_1;
-      if (d.email && !$('#email').value) $('#email').value = String(d.email).toLowerCase();
+      let email = d.email, fone = d.ddd_telefone_1;
+      // A BrasilAPI quase nunca traz o e-mail; a CNPJ.ws (pública) traz e-mail e telefone.
+      if (!email || !fone) {
+        try {
+          const e = (await (await fetch('https://publica.cnpj.ws/cnpj/' + c)).json()).estabelecimento || {};
+          email = email || e.email; fone = fone || (e.telefone1 ? (e.ddd1 || '') + e.telefone1 : '');
+        } catch { /* segue só com a BrasilAPI */ }
+      }
+      if (email) $('#email').value = String(email).toLowerCase();
+      if (fone) $('#fone').value = String(fone).replace(/\D/g, '').replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3');
       st.textContent = '· ' + (d.descricao_situacao_cadastral || 'encontrado').toLowerCase();
     } catch (e) { st.textContent = '· CNPJ não encontrado'; }
   };
