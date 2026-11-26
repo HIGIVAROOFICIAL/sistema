@@ -42,6 +42,8 @@ const ROTAS = [
   [/^#\/financeiro$/, () => telaSecao('financeiro')],
   [/^#\/financeiro\/resumo$/, telaFinanceiro],
   [/^#\/financeiro\/receber$/, telaAReceber],
+  [/^#\/financeiro\/despesas$/, () => telaDespesas('lista')],
+  [/^#\/financeiro\/despesas\/nova$/, () => telaDespesas('nova')],
   [/^#\/admin$/, () => telaSecao('admin')],
   [/^#\/admin\/(empresa|usuarios)$/, (m) => telaAdmin(m)],
 ];
@@ -77,6 +79,7 @@ const ICONES = {
   grafico: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
   empresa: '<path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4"/>',
   usuarios: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  despesas: '<path d="M4 3h16v18l-3-2-3 2-2-2-2 2-3-2-3 2z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
@@ -88,7 +91,7 @@ const SECOES = {
   vendas: ['Vendas', [['#/vendas/lista', 'vendas', 'Vendas do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/vendas/devolvidas', 'devolucao', 'Devoluções']]],
   clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
-  financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)']]],
+  financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1]]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
 };
 const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || ehAdmin()).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
@@ -598,9 +601,22 @@ async function telaFinanceiro() {
     const meses = [...Array(6)].map((_, i) => { const d = new Date(y, mm - 6 + i, 1); const k = d.toLocaleDateString('sv-SE').slice(0, 7); return { k, rot: d.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', ''), v: vs.filter((x) => x.date.startsWith(k)).reduce((s, x) => s + Number(x.total), 0) }; });
     const maior = Math.max(1, ...meses.map((x) => x.v));
     const porFunc = {}; doMes.forEach((v) => { const k = v.employee_name || '—'; porFunc[k] = porFunc[k] || { n: 0, t: 0 }; porFunc[k].n++; porFunc[k].t += Number(v.total); });
+    // Despesas do mês (só administrador): pagas no mês, a pagar com vencimento no mês e resultado.
+    let blocoDesp = '';
+    if (ehAdmin()) {
+      const [a, b] = mesRange(m);
+      const ds = await ok(sb.from('expenses').select('amount,status,due_date,paid_at').or(`and(due_date.gte.${a},due_date.lte.${b}),and(paid_at.gte.${a},paid_at.lte.${b})`).limit(5000));
+      const pagasMes = ds.filter((d) => d.status === 'pago' && d.paid_at >= a && d.paid_at <= b).reduce((s, d) => s + Number(d.amount), 0);
+      const aPagar = ds.filter((d) => d.status === 'aberto' && d.due_date >= a && d.due_date <= b).reduce((s, d) => s + Number(d.amount), 0);
+      const res = fat - pagasMes;
+      blocoDesp = `<div class="grade" style="margin-top:12px">
+        <div class="kpi"><small>Despesas pagas no mês</small><strong style="color:var(--red)">${brl(pagasMes)}</strong></div>
+        <div class="kpi"><small>Despesas a pagar no mês</small><strong>${brl(aPagar)}</strong></div>
+        <a class="kpi" href="#/financeiro/despesas" style="text-decoration:none;color:inherit;grid-column:span 2"><small>Resultado do mês (faturamento − despesas pagas)</small><strong style="color:${res >= 0 ? 'var(--green-d)' : 'var(--red)'}">${brl(res)}</strong></a></div>`;
+    }
     $('#fin').innerHTML = `<div class="grade" style="margin-top:12px">
       <div class="kpi"><small>Faturamento</small><strong>${brl(fat)}</strong></div><div class="kpi"><small>Vendas</small><strong>${doMes.length}</strong></div>
-      <div class="kpi"><small>Ticket médio</small><strong>${brl(doMes.length ? fat / doMes.length : 0)}</strong></div><div class="kpi"><small>Descontos dados</small><strong>${brl(desc)}</strong></div></div>
+      <div class="kpi"><small>Ticket médio</small><strong>${brl(doMes.length ? fat / doMes.length : 0)}</strong></div><div class="kpi"><small>Descontos dados</small><strong>${brl(desc)}</strong></div></div>${blocoDesp}
       <div class="card" style="margin-top:12px"><b>Meta do mês:</b> ${metaV ? brl(metaV) + ' · ' + pctMeta.toFixed(0) + '% atingido' : 'não definida (Admin › Empresa)'}<div class="meta" style="margin-top:8px"><i style="width:${pctMeta}%"></i></div></div>
       <div class="card"><b>Últimos 6 meses</b><div class="barras">${meses.map((x) => `<div><small>${x.v ? brl(x.v).replace(',00', '') : ''}</small><i style="height:${(x.v / maior) * 130}px"></i>${x.rot}</div>`).join('')}</div></div>
       <h2>Desempenho por vendedor</h2><div class="tabela"><table><thead><tr><th>Vendedor</th><th class="num">Vendas</th><th class="num">Total</th></tr></thead><tbody>
@@ -636,6 +652,115 @@ async function telaAReceber() {
   let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#sit').onchange = carregar;
   $('#relatorio').onclick = () => pdfReceber(atual, [$('#busca').value.trim() && 'Filtro: ' + $('#busca').value.trim(), $('#sit').selectedOptions[0].text].filter(Boolean).join(' • ')).catch(falhou);
   carregar();
+}
+
+// ---------- despesas (contas a pagar) — só administrador ----------
+const CATEGORIAS = ['Compra de mercadoria', 'Aluguel', 'Energia', 'Água', 'Internet e telefone', 'Combustível e frete', 'Salários e comissões', 'Impostos (DAS/MEI)', 'Marketing', 'Manutenção', 'Embalagens e material', 'Taxas bancárias e cartão', 'Outros'];
+const seloDespesa = (d) => d.status === 'pago' ? '<span class="selo recebido">paga</span>' : diasAtraso(d.due_date) > 0 ? `<span class="selo vencido">${textoPrazo(d.due_date).toLowerCase()}</span>` : `<span class="selo aberto">a pagar · ${textoPrazo(d.due_date).toLowerCase()}</span>`;
+const mesRange = (m) => { const [y, mm] = m.split('-').map(Number); return [m + '-01', m + '-' + String(new Date(y, mm, 0).getDate()).padStart(2, '0')]; };
+async function telaDespesas(modo) {
+  if (!ehAdmin()) { app.innerHTML = '<p class="vazio">Despesas: acesso restrito ao administrador.</p>'; return; }
+  const topo = secao('financeiro', modo === 'nova' ? '#/financeiro/despesas/nova' : '#/financeiro/despesas');
+  if (modo === 'nova') { app.innerHTML = `${topo}<div id="form"></div>`; formDespesa(null, () => (location.hash = '#/financeiro/despesas'), () => (location.hash = '#/financeiro')); return; }
+  app.innerHTML = `${topo}
+  <div class="linha"><input id="mes" type="month" value="${hoje().slice(0, 7)}" style="flex:0 1 190px"><select id="sit" style="flex:0 1 190px"><option value="">Todas do mês</option><option value="aberto">Em aberto (a pagar)</option><option value="vencidas">Vencidas</option><option value="pago">Pagas</option></select><input id="busca" placeholder="Descrição ou fornecedor"></div>
+  <div class="acoes"><a class="btn pri" href="#/financeiro/despesas/nova">＋ Nova despesa</a><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
+  <div id="form"></div><div id="kpis" class="grade" style="margin-top:12px"></div><div id="cats"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Vencimento</th><th>Descrição</th><th class="esconde-cel">Categoria</th><th class="esconde-cel">Fornecedor</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let atual = [];
+  const carregar = async () => {
+    const m = $('#mes').value; let q = sb.from('expenses').select('*').order('due_date').order('description').limit(2000);
+    if (m) { const [a, b] = mesRange(m); q = q.gte('due_date', a).lte('due_date', b); }
+    const t = limpaBusca($('#busca').value); if (t) q = q.or(`description.ilike.%${t}%,supplier.ilike.%${t}%,category.ilike.%${t}%`);
+    let ds = await ok(q);
+    const sit = $('#sit').value;
+    if (sit === 'aberto') ds = ds.filter((d) => d.status === 'aberto'); if (sit === 'pago') ds = ds.filter((d) => d.status === 'pago');
+    if (sit === 'vencidas') ds = ds.filter((d) => d.status === 'aberto' && diasAtraso(d.due_date) > 0);
+    atual = ds;
+    const soma = (l) => l.reduce((s, d) => s + Number(d.amount), 0);
+    const pagas = ds.filter((d) => d.status === 'pago'), abertas = ds.filter((d) => d.status === 'aberto'), venc = abertas.filter((d) => diasAtraso(d.due_date) > 0);
+    $('#kpis').innerHTML = `<div class="kpi"><small>Total de despesas</small><strong>${brl(soma(ds))}</strong></div><div class="kpi"><small>Pagas</small><strong>${brl(soma(pagas))}</strong></div>
+      <div class="kpi"><small>A pagar</small><strong>${brl(soma(abertas))}</strong></div><div class="kpi"><small>Vencidas</small><strong style="color:var(--red)">${brl(soma(venc))}</strong></div>`;
+    const porCat = {}; ds.forEach((d) => (porCat[d.category] = (porCat[d.category] || 0) + Number(d.amount)));
+    $('#cats').innerHTML = Object.keys(porCat).length ? `<div class="card" style="margin-top:12px"><b>Por categoria</b><div style="margin-top:8px">${Object.entries(porCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)"><span>${esc(c)}</span><b>${brl(v)}</b></div>`).join('')}</div></div>` : '';
+    $('#lista').innerHTML = ds.map((d) => `<tr class="clica" data-id="${d.id}"><td>${dataBR(d.due_date)}</td><td>${esc(d.description)}</td><td class="esconde-cel">${esc(d.category)}</td><td class="esconde-cel">${esc(d.supplier || '')}</td><td class="num"><b>${brl(d.amount)}</b></td><td>${seloDespesa(d)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma despesa neste filtro.</td></tr>';
+    $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formDespesa(ds.find((d) => d.id === tr.dataset.id), carregar)));
+  };
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; $('#sit').onchange = carregar;
+  $('#relatorio').onclick = () => pdfDespesas(atual, [$('#mes').value && 'Mês: ' + $('#mes').value.split('-').reverse().join('/'), $('#sit').selectedOptions[0].text, $('#busca').value.trim() && 'Filtro: ' + $('#busca').value.trim()].filter(Boolean).join(' • ')).catch(falhou);
+  carregar();
+}
+function formDespesa(d, depois, aoCancelar) {
+  d = d || {};
+  $('#form').innerHTML = `<div class="card"><h2 style="margin-top:0">${d.id ? 'Editar despesa' : 'Nova despesa'}</h2><form id="fd">
+    <div class="linha"><div style="flex:2 1 260px"><label>Descrição</label><input name="description" required value="${esc(d.description)}" placeholder="Ex.: Aluguel do depósito, Compra Candeias NF 1234"></div>
+    <div><label>Categoria</label><select name="category">${CATEGORIAS.map((c) => `<option ${c === (d.category || 'Outros') ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div>
+    <div class="linha"><div><label>Fornecedor / a quem pagar</label><input name="supplier" value="${esc(d.supplier)}"></div><div><label>Valor (R$)</label><input name="amount" required inputmode="decimal" value="${d.amount != null ? String(d.amount).replace('.', ',') : ''}"></div><div><label>Vencimento</label><input type="date" name="due_date" required value="${String(d.due_date || hoje()).slice(0, 10)}"></div></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" id="pago" style="width:auto" ${d.status === 'pago' ? 'checked' : ''}> Já está paga</label>
+    <div class="linha" id="boxPago"><div><label>Data do pagamento</label><input type="date" name="paid_at" value="${String(d.paid_at || hoje()).slice(0, 10)}"></div><div><label>Forma de pagamento</label><select name="payment_method">${FORMAS.map((f) => `<option ${f === d.payment_method ? 'selected' : ''}>${f}</option>`).join('')}</select></div></div>
+    ${d.id ? '' : '<div class="linha"><div style="flex:0 1 260px"><label>Repetir nos próximos meses (ex.: aluguel)</label><select name="repetir"><option value="1">Não repetir</option>' + [2, 3, 6, 12].map((n) => `<option value="${n}">${n} meses (inclui este)</option>`).join('') + '</select></div></div>'}
+    <label>Observações</label><textarea name="notes">${esc(d.notes)}</textarea>
+    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${d.id ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
+  $('#form').scrollIntoView({ behavior: 'smooth' });
+  const sinc = () => ($('#boxPago').hidden = !$('#pago').checked); $('#pago').onchange = sinc; sinc();
+  $('#cancela').onclick = () => (aoCancelar ? aoCancelar() : ($('#form').innerHTML = ''));
+  if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir a despesa "' + d.description + '"?')) return; try { await ok(sb.from('expenses').delete().eq('id', d.id)); aviso('Despesa excluída.'); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
+  $('#fd').onsubmit = async (e) => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); const pago = $('#pago').checked; const rep = Number(f.repetir || 1); delete f.repetir;
+    const reg = { description: f.description.trim(), category: f.category, supplier: f.supplier.trim() || null, amount: num(f.amount), due_date: f.due_date, notes: f.notes.trim() || null,
+      status: pago ? 'pago' : 'aberto', paid_at: pago ? f.paid_at || hoje() : null, payment_method: pago ? f.payment_method : null };
+    if (!reg.amount) return aviso('Informe o valor.', true);
+    try {
+      if (d.id) await ok(sb.from('expenses').update(reg).eq('id', d.id));
+      else {
+        const [y, m, dia] = reg.due_date.split('-').map(Number);
+        const regs = [...Array(rep)].map((_, k) => { const ult = new Date(y, m - 1 + k + 1, 0).getDate(); const dt = new Date(y, m - 1 + k, Math.min(dia, ult)).toLocaleDateString('sv-SE'); return k === 0 ? { ...reg, created_by: S.perfil.full_name } : { ...reg, due_date: dt, status: 'aberto', paid_at: null, payment_method: null, created_by: S.perfil.full_name }; });
+        await ok(sb.from('expenses').insert(regs));
+      }
+      aviso(rep > 1 ? `Despesa lançada para ${rep} meses.` : 'Despesa salva.'); $('#form').innerHTML = ''; depois();
+    } catch (err) { falhou(err); }
+  };
+}
+async function pdfDespesas(lista, filtro) {
+  const c = S.empresa || {};
+  const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const logo = await carregarLogo();
+  const M = 12, L = 186, NAVY = [3, 35, 68], TINTA = [13, 42, 74], CINZA = [96, 114, 138], LINHA = [223, 231, 240], FUNDO = [244, 247, 251], VERMELHO = [200, 55, 55];
+  const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17).replace(',', ' às');
+  cabecalhoPdf(pdf, c, logo, 'RELATÓRIO DE DESPESAS', 'Contas a pagar', 'Gerado em ' + agora);
+  const soma = (l) => l.reduce((s, d) => s + Number(d.amount), 0);
+  const pagas = lista.filter((d) => d.status === 'pago'), abertas = lista.filter((d) => d.status === 'aberto'), venc = abertas.filter((d) => diasAtraso(d.due_date) > 0);
+  let y = 48; const w = (L - 9) / 4;
+  [['Total de despesas', brl(soma(lista)), TINTA], ['Pagas', brl(soma(pagas)), TINTA], ['A pagar', brl(soma(abertas)), TINTA], ['Vencidas', brl(soma(venc)), VERMELHO]].forEach(([r, v, cor], k) => {
+    const x = M + k * (w + 3); pdf.setFillColor(...FUNDO); pdf.setDrawColor(...LINHA); pdf.roundedRect(x, y, w, 17, 2, 2, 'FD');
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...CINZA); pdf.text(r.toUpperCase(), x + 4, y + 6); pdf.setFontSize(12); pdf.setTextColor(...cor); pdf.text(v, x + 4, y + 13);
+  });
+  y += 22;
+  if (filtro) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...CINZA); pdf.text(filtro, M, y); y += 4; }
+  const situacao = (d) => d.status === 'pago' ? 'Paga em ' + dataBR(d.paid_at) : textoPrazo(d.due_date);
+  pdf.autoTable({
+    startY: y + 1, margin: { left: M, right: M, top: 20, bottom: 22 },
+    head: [['Vencimento', 'Descrição', 'Categoria', 'Fornecedor', 'Situação', 'Valor']],
+    body: lista.map((d) => [dataBR(d.due_date), d.description, d.category, d.supplier || '', situacao(d), brl(d.amount)]),
+    foot: [[{ content: `TOTAL (${lista.length} ${lista.length === 1 ? 'despesa' : 'despesas'})`, colSpan: 5, styles: { halign: 'right' } }, brl(soma(lista))]],
+    theme: 'plain',
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: { top: 2, bottom: 2, left: 1.8, right: 1.8 }, textColor: TINTA, lineColor: LINHA, lineWidth: { bottom: 0.2 }, valign: 'middle' },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5, lineWidth: 0 },
+    footStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
+    alternateRowStyles: { fillColor: [248, 250, 253] },
+    columnStyles: { 0: { cellWidth: 20, fontStyle: 'bold' }, 2: { cellWidth: 32, textColor: CINZA }, 3: { cellWidth: 32 }, 4: { cellWidth: 30 }, 5: { cellWidth: 24, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: (k) => { if (k.section === 'body' && k.column.index === 4) { const t = String(k.cell.raw); k.cell.styles.fontStyle = 'bold'; k.cell.styles.textColor = t.startsWith('Paga') ? [60, 140, 30] : t.startsWith('Vencida') ? VERMELHO : t.startsWith('Vence hoje') ? [190, 120, 0] : TINTA; } if (k.section === 'head' && k.column.index === 5) k.cell.styles.halign = 'right'; },
+    didDrawPage: (k) => { if (k.pageNumber > 1) { pdf.setFillColor(...NAVY); pdf.rect(0, 0, 210, 14, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text('HIGIVARO  •  Relatório de despesas  •  ' + agora, M, 9); } },
+  });
+  // Resumo por categoria
+  const porCat = {}; lista.forEach((d) => (porCat[d.category] = (porCat[d.category] || 0) + Number(d.amount)));
+  if (Object.keys(porCat).length) {
+    pdf.autoTable({ startY: pdf.lastAutoTable.finalY + 8, margin: { left: M, right: 210 - M - 100, bottom: 22 }, head: [['Por categoria', 'Total']], body: Object.entries(porCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, brl(v)]),
+      theme: 'plain', styles: { fontSize: 8, textColor: TINTA, lineColor: LINHA, lineWidth: { bottom: 0.2 } }, headStyles: { fillColor: [47, 134, 222], textColor: [255, 255, 255], fontStyle: 'bold' }, columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } } });
+  }
+  if (!lista.length) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...CINZA); pdf.text('Nenhuma despesa neste filtro.', 105, y + 25, { align: 'center' }); }
+  rodapePdf(pdf, c);
+  pdf.save(`Despesas-${hoje()}.pdf`);
 }
 
 // ---------- admin ----------
