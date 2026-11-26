@@ -289,12 +289,12 @@ function formCliente(c, depois) {
     const d = soDig($('#cdoc').value); if (d.length !== 11 && d.length !== 14) return;
     $('#cdoc').value = formatarDoc(d);
     const ja = await clientePorDoc(d); if (ja && ja.id !== c.id) { $('#docst').textContent = '· já cadastrado: código ' + ja.code; return; }
-    if (d.length === 14 && !c.id) { $('#docst').textContent = '· buscando…'; const r = await buscarCnpj(d); if (!r) { $('#docst').textContent = '· não encontrado'; return; } $('#cnome').value = r.nome; if (r.fone) $('#cfone').value = r.fone; if (r.email) $('#cemail').value = r.email; if (r.endereco) $('#cend').value = r.endereco; $('#docst').textContent = '· ' + r.situacao; }
+    if (d.length === 14 && !c.id) { $('#docst').textContent = '· buscando…'; const r = await buscarCnpj(d); if (!r) { $('#docst').textContent = '· não encontrado'; return; } $('#cnome').value = r.nome.toUpperCase(); if (r.fone) $('#cfone').value = r.fone; if (r.email) $('#cemail').value = r.email; if (r.endereco) $('#cend').value = r.endereco; $('#docst').textContent = '· ' + r.situacao; }
   };
   if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir o cliente ' + c.code + '? Os orçamentos dele continuam.')) return; try { await ok(sb.from('clients').delete().eq('id', c.id)); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
   $('#fc').onsubmit = async (e) => {
     e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
-    Object.keys(f).forEach((k) => (f[k] = f[k].trim() || null)); if (f.email) f.email = f.email.toLowerCase();
+    Object.keys(f).forEach((k) => (f[k] = f[k].trim() || null)); if (f.email) f.email = f.email.toLowerCase(); if (f.name) f.name = f.name.toUpperCase();
     try { const r = await salvarCliente(c.id, f); aviso('Cliente ' + r.code + ' salvo.'); $('#form').innerHTML = ''; depois(); } catch (err) { falhou(String(err.message || err).includes('clients_doc_unico') ? 'esse CPF/CNPJ já está cadastrado' : err); }
   };
 }
@@ -392,7 +392,7 @@ async function telaEditorOrcamento(id, codCliente) {
     st.textContent = '· buscando…';
     const d = await buscarCnpj(c);
     if (!d) { st.textContent = '· CNPJ não encontrado'; return; }
-    $('#nome').value = d.nome; if (d.email) $('#email').value = d.email; if (d.fone) $('#fone').value = d.fone;
+    $('#nome').value = d.nome.toUpperCase(); if (d.email) $('#email').value = d.email; if (d.fone) $('#fone').value = d.fone;
     st.textContent = '· ' + d.situacao; etapa();
   };
   etapa();
@@ -402,7 +402,7 @@ async function telaEditorOrcamento(id, codCliente) {
     if (!itens.length) return aviso('Adicione pelo menos um produto.', true);
     const b = $('#salvar'); b.disabled = true;
     const pct = num($('#desc').value), bruto = itens.reduce((s, i) => s + i.quantity * i.unit_price, 0);
-    const reg = { client_name: $('#nome').value.trim(), client_doc: $('#doc').value.trim(), client_phone: $('#fone').value.trim(), client_email: $('#email').value.trim(), observations: $('#obs').value.trim(), discount_percent: pct, total: r2(bruto * (1 - pct / 100)), items_count: itens.length, status: 'finalizado' };
+    const reg = { client_name: $('#nome').value.trim().toUpperCase(), client_doc: $('#doc').value.trim(), client_phone: $('#fone').value.trim(), client_email: $('#email').value.trim(), observations: $('#obs').value.trim(), discount_percent: pct, total: r2(bruto * (1 - pct / 100)), items_count: itens.length, status: 'finalizado' };
     try {
       // Garante o cadastro do cliente (cria com código novo ou atualiza os dados) antes de gravar o orçamento.
       const cli = await salvarCliente(clienteId, { name: reg.client_name, doc: reg.client_doc || null, phone: reg.client_phone || null, email: reg.client_email || null });

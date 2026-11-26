@@ -72,3 +72,5 @@ tr.clica:hover td{background:#f7fafd}
 #aviso.erro{background:var(--red)}
 @media (max-width:640px){main{padding:12px}.faixa{padding:6px 12px}#menu{gap:8px;padding:8px 12px}#menu a,#menu .sair{width:74px;height:64px;font-size:11px}#menu svg{width:24px;height:24px}#menu .sair{margin-left:0}th,td{padding:8px 6px;font-size:13px}.esconde-cel{display:none}}
 .acoes.topo{margin:0 0 14px}
+/* Nome do cliente sempre em maiúsculas (o banco também garante). */
+#nome,#cnome{text-transform:uppercase}
