@@ -706,7 +706,7 @@ async function pdfReceber(vendas, filtro) {
     headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.3, lineWidth: 0 },
     footStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
     alternateRowStyles: { fillColor: [248, 250, 253] },
-    columnStyles: { 0: { cellWidth: 15 }, 1: { cellWidth: 10, textColor: CINZA }, 3: { cellWidth: 22 }, 4: { cellWidth: 18.5 }, 5: { cellWidth: 19 }, 6: { cellWidth: 26 }, 7: { cellWidth: 17 }, 8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' } },
+    columnStyles: { 0: { cellWidth: 13 }, 1: { cellWidth: 10, textColor: CINZA }, 3: { cellWidth: 25 }, 4: { cellWidth: 18.5 }, 5: { cellWidth: 19 }, 6: { cellWidth: 26 }, 7: { cellWidth: 17 }, 8: { cellWidth: 22, halign: 'right', fontStyle: 'bold' } },
     didParseCell: (d) => {
       if (d.section === 'body' && d.column.index === 6) { const t = String(d.cell.raw); d.cell.styles.fontStyle = 'bold'; d.cell.styles.textColor = t.startsWith('Vencida') ? VERMELHO : t.startsWith('Vence hoje') ? [190, 120, 0] : [60, 140, 30]; } if (d.section === 'head' && d.column.index === 8) d.cell.styles.halign = 'right'; },
     didDrawPage: (d) => { if (d.pageNumber > 1) { pdf.setFillColor(...NAVY); pdf.rect(0, 0, 210, 14, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text('HIGIVARO  •  Contas a receber  •  ' + agora, M, 9); } },
