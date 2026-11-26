@@ -473,8 +473,8 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   cor('setFillColor', logoCor); pdf.rect(0, 0, 210, 40, 'F');
   cor('setFillColor', VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
   // Logo inteira (com nome e lema), proporção 3:2, à esquerda; contatos ao lado, separados por um fio.
-  if (logo) pdf.addImage(logo, 'JPEG', 4, 1.5, 55.5, 37);
-  const xEmp = logo ? 64 : M;
+  if (logo) pdf.addImage(logo, 'JPEG', M - 2, 7, 39, 26);
+  const xEmp = logo ? M + 44 : M;
   if (logo) { cor('setDrawColor', [60, 95, 140]); pdf.setLineWidth(0.3); pdf.line(xEmp - 3, 9, xEmp - 3, 33); }
   else txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true, c: [255, 255, 255] });
   const contatos = [[c.cnpj && 'CNPJ', c.cnpj], ['WhatsApp', c.phone], ['E-mail', c.email], ['Site', 'higivarooficial.github.io'], [c.address && 'Endereço', c.address]].filter(([r, v]) => r && v);
