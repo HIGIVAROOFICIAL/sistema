@@ -444,7 +444,13 @@ async function telaOrcamentoPublico(id) {
 let logoData;
 async function carregarLogo() {
   if (logoData !== undefined) return logoData;
-  try { const b = await (await fetch('logo.png')).blob(); logoData = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); }); } catch { logoData = null; }
+  // Reduz a logo para JPEG de 360 px: o PDF fica leve (bom para mandar no WhatsApp).
+  try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = 'logo.png'; });
+    const cv = document.createElement('canvas'); cv.width = cv.height = 360; const g = cv.getContext('2d');
+    g.fillStyle = '#032344'; g.fillRect(0, 0, 360, 360); g.drawImage(img, 0, 0, 360, 360);
+    logoData = cv.toDataURL('image/jpeg', 0.88);
+  } catch { logoData = null; }
   return logoData;
 }
 // PDF profissional (orçamento e venda): cabeçalho azul com logo, quadro do cliente, tabela listrada, totais em destaque e rodapé com página.
@@ -462,7 +468,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   // Cabeçalho
   cor('setFillColor', NAVY); pdf.rect(0, 0, 210, 40, 'F');
   cor('setFillColor', VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
-  if (logo) pdf.addImage(logo, 'PNG', M, 7, 26, 26);
+  if (logo) pdf.addImage(logo, 'JPEG', M, 7, 26, 26);
   const xEmp = logo ? M + 31 : M;
   txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true, c: [255, 255, 255] });
   txt('Distribuidora de produtos de limpeza e higiene', xEmp, 20.5, { s: 8.5, c: [170, 200, 230] });
@@ -515,7 +521,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   if (y + alturaBloco > 275) { pdf.addPage(); y = 22; }
   const xT = 210 - M - 78;
   txt('Subtotal', xT + 3, y + 5, { s: 9, c: CINZA }); txt(brl(bruto), 210 - M - 3, y + 5, { s: 9, a: 'right' });
-  txt(`Desconto${pct ? ' (' + num(pct) + '%)' : ''}`, xT + 3, y + 11, { s: 9, c: CINZA }); txt(pct ? '− ' + brl(bruto * pct / 100) : brl(0), 210 - M - 3, y + 11, { s: 9, a: 'right', c: pct ? [200, 60, 60] : TINTA });
+  txt(`Desconto${pct ? ' (' + num(pct) + '%)' : ''}`, xT + 3, y + 11, { s: 9, c: CINZA }); txt(pct ? '- ' + brl(bruto * pct / 100) : brl(0), 210 - M - 3, y + 11, { s: 9, a: 'right', c: pct ? [200, 60, 60] : TINTA });
   cor('setFillColor', NAVY); pdf.roundedRect(xT, y + 15, 78, 14, 2.5, 2.5, 'F');
   txt('TOTAL', xT + 4, y + 23.8, { s: 10, b: true, c: [255, 255, 255] });
   txt(brl(bruto * (1 - pct / 100)), 210 - M - 4, y + 24.2, { s: 15, b: true, c: VERDE, a: 'right' });
@@ -546,9 +552,9 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   for (let p = 1; p <= n; p++) {
     pdf.setPage(p);
     cor('setDrawColor', LINHA); pdf.setLineWidth(0.3); pdf.line(M, 284, 210 - M, 284);
-    txt('HIGIVARO  •  Qualidade  •  Variedade  •  Confiança', M, 289, { s: 7.5, b: true, c: AZUL });
-    txt('WhatsApp ' + (c.phone || '') + '  •  higivarooficial.github.io', 105, 289, { s: 7.5, c: CINZA, a: 'center' });
-    txt(`Página ${p} de ${n}`, 210 - M, 289, { s: 7.5, c: CINZA, a: 'right' });
+    txt('HIGIVARO  •  Qualidade  •  Variedade  •  Confiança', M, 288.5, { s: 7.5, b: true, c: AZUL });
+    txt('WhatsApp ' + (c.phone || '') + '   •   higivarooficial.github.io', M, 292.5, { s: 7, c: CINZA });
+    txt(`Página ${p} de ${n}`, 210 - M, 290.5, { s: 7.5, c: CINZA, a: 'right' });
   }
   pdf.save(`${ehVenda ? 'Venda' : 'Orcamento'}-${doc.number}-${String(doc.client_name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w]+/g, '-').slice(0, 30)}.pdf`);
 }
