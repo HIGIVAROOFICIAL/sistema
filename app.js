@@ -27,18 +27,23 @@ const statusSelo = (s) => `<span class="selo ${esc(s)}">${esc(s)}</span>`;
 const ROTAS = [
   [/^#\/o\/([\w-]+)$/, telaOrcamentoPublico, true],
   [/^#\/?$/, telaInicio],
-  [/^#\/produtos$/, telaProdutos],
+  [/^#\/produtos$/, () => telaSecao('produtos')],
+  [/^#\/produtos\/(lista|estoque|novo|importar)$/, (m) => telaProdutos(m)],
   [/^#\/orcamento\/novo(?:\?cliente=(\d+))?$/, (cod) => telaEditorOrcamento(null, cod)],
-  [/^#\/clientes$/, () => telaClientes('menu')],
+  [/^#\/clientes$/, () => telaSecao('clientes')],
   [/^#\/clientes\/(novo|lista)$/, (modo) => telaClientes(modo)],
   [/^#\/orcamento\/([\w-]+)\/editar$/, (id) => telaEditorOrcamento(id)],
   [/^#\/orcamento\/([\w-]+)$/, telaOrcamento],
-  [/^#\/orcamentos$/, telaOrcamentos],
-  [/^#\/vendas$/, telaVendas],
+  [/^#\/orcamentos$/, () => telaSecao('orcamentos')],
+  [/^#\/orcamentos\/(abertos|todos)$/, (m) => telaOrcamentos(m)],
+  [/^#\/vendas$/, () => telaSecao('vendas')],
+  [/^#\/vendas\/(lista|devolvidas)$/, (m) => telaVendas(m)],
   [/^#\/venda\/([\w-]+)$/, telaVenda],
-  [/^#\/financeiro$/, telaFinanceiro],
+  [/^#\/financeiro$/, () => telaSecao('financeiro')],
+  [/^#\/financeiro\/resumo$/, telaFinanceiro],
   [/^#\/financeiro\/receber$/, telaAReceber],
-  [/^#\/admin$/, telaAdmin],
+  [/^#\/admin$/, () => telaSecao('admin')],
+  [/^#\/admin\/(empresa|usuarios)$/, (m) => telaAdmin(m)],
 ];
 async function rotear() {
   const h = location.hash || '#/';
@@ -64,17 +69,36 @@ const ICONES = {
   produtos: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
   clientes: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 6 5"/>',
   novoCliente: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
+  lista: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
+  receber: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  devolucao: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  alerta: '<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  importar: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
+  grafico: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+  empresa: '<path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4"/>',
+  usuarios: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
 };
 const icone = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONES[n]}</svg>`;
+// Cada área do menu abre com botões grandes de opções sobre o tema (pedido do dono).
+const SECOES = {
+  orcamentos: ['Orçamentos', [['#/orcamento/novo', 'novo', 'Novo orçamento'], ['#/orcamentos/abertos', 'orcamentos', 'Orçamentos em aberto'], ['#/orcamentos/todos', 'lista', 'Todos os orçamentos']]],
+  vendas: ['Vendas', [['#/vendas/lista', 'vendas', 'Vendas do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/vendas/devolvidas', 'devolucao', 'Devoluções']]],
+  clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
+  produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
+  financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)']]],
+  admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
+};
+const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || ehAdmin()).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
+async function telaSecao(nome) { if (nome === 'admin' && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
 function montarMenu(h) {
   $('#topo').hidden = false;
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
   const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
   if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
-  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
+  const ativo = (href) => h === href || (href !== '#/' && h.startsWith(href + '/')) || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
   $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
 }
@@ -174,22 +198,35 @@ async function buscarProdutos(t, limite = 30) {
   for (const p of semAcento(limpaBusca(t)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
   return ok(q);
 }
-async function telaProdutos() {
-  app.innerHTML = `<h1>Produtos</h1>
+async function telaProdutos(modo) {
+  if ((modo === 'novo' || modo === 'importar') && !ehAdmin()) { location.hash = '#/produtos'; return; }
+  const topo = secao('produtos', '#/produtos/' + modo);
+  if (modo === 'novo') { app.innerHTML = `${topo}<div id="form"></div>`; formProduto(null, () => (location.hash = '#/produtos/lista')); $('#cancela').onclick = () => (location.hash = '#/produtos'); return; }
+  if (modo === 'importar') {
+    app.innerHTML = `${topo}<div class="card"><h2 style="margin-top:0">Importar planilha de produtos</h2>
+      <p>Use um arquivo <b>CSV</b> (no Excel: <i>Salvar como › CSV</i>) com estas colunas na primeira linha:<br><code>codigo; descricao; marca; unidade; estoque; preco</code></p>
+      <p style="color:var(--muted)">Produto com código que já existe é <b>atualizado</b> (preço, estoque, descrição); código novo é <b>cadastrado</b>.</p>
+      <label class="btn azul" style="margin:0">Escolher arquivo CSV<input type="file" id="csv" accept=".csv,text/csv" hidden></label></div>`;
+    $('#csv').onchange = (e) => importarCsv(e.target.files[0], () => (location.hash = '#/produtos/lista'));
+    return;
+  }
+  const estoque = modo === 'estoque';
+  app.innerHTML = `${topo}
   <div class="linha"><input id="busca" placeholder="Palavras-chave (ex.: agua 5l candeias) • do mais barato ao mais caro"></div>
-  ${ehAdmin() ? `<div class="acoes"><button class="btn azul" id="novo">＋ Produto</button><label class="btn" style="margin:0">Importar planilha (CSV)<input type="file" id="csv" accept=".csv,text/csv" hidden></label></div>` : ''}
+  ${estoque ? '<p style="color:var(--muted);margin:8px 0 0">Produtos com estoque <b>até 5 unidades</b>, do menor estoque para o maior.</p>' : ''}
   <div id="form"></div><div class="tabela" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Descrição</th><th class="esconde-cel">Marca</th><th>Un.</th><th class="num">Estoque</th><th class="num">Preço</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
-    const ps = await buscarProdutos($('#busca').value, 200);
+    let ps;
+    if (estoque) {
+      let q = sb.from('products').select('*').lte('stock', 5).order('stock').order('description').limit(500);
+      for (const p of semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
+      ps = await ok(q);
+    } else ps = await buscarProdutos($('#busca').value, 200);
     $('#lista').innerHTML = ps.map((p) => `<tr class="${ehAdmin() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
     if (ehAdmin()) $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formProduto(ps.find((p) => p.id === tr.dataset.id), carregar)));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
-  if (ehAdmin()) {
-    $('#novo').onclick = () => formProduto(null, carregar);
-    $('#csv').onchange = (e) => importarCsv(e.target.files[0], carregar);
-  }
-  carregar();
+  carregar(); $('#busca').focus();
 }
 function formProduto(p, depois) {
   p = p || {};
@@ -267,12 +304,7 @@ async function salvarCliente(id, dados) {
 }
 // Clientes: abre só com dois botões grandes; o formulário ou a lista aparecem depois do clique.
 async function telaClientes(modo) {
-  const { count } = await sb.from('clients').select('id', { count: 'exact', head: true });
-  app.innerHTML = `<h1>Clientes</h1>
-  <div class="atalhos">
-    <a href="#/clientes/novo" class="${modo === 'novo' ? 'ativo' : ''}">${icone('novoCliente')}<span>Cadastrar novo cliente</span></a>
-    <a href="#/clientes/lista" class="${modo === 'lista' ? 'ativo' : ''}">${icone('clientes')}<span>Clientes cadastrados${count != null ? ` <b>(${count})</b>` : ''}</span></a>
-  </div>
+  app.innerHTML = `${secao('clientes', '#/clientes/' + modo)}
   <div id="form"></div>
   ${modo === 'lista' ? `<div class="linha"><input id="busca" placeholder="Buscar por nome, código, CPF/CNPJ, telefone ou e-mail"></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Cód.</th><th>Nome / Razão social</th><th class="esconde-cel">CPF / CNPJ</th><th>Telefone</th><th class="esconde-cel">E-mail</th></tr></thead><tbody id="lista"></tbody></table></div>` : ''}`;
@@ -494,13 +526,13 @@ const diasAtraso = (venc) => Math.floor((new Date(hoje()) - new Date(String(venc
 // Texto claro do prazo: "Vencida há 3 dias", "Vence hoje" ou "Faltam 34 dias".
 const textoPrazo = (venc) => { const d = diasAtraso(venc); return d > 0 ? `Vencida há ${d} ${d === 1 ? 'dia' : 'dias'}` : d === 0 ? 'Vence hoje' : `Faltam ${-d} ${d === -1 ? 'dia' : 'dias'}`; };
 const seloPagamento = (v) => v.status !== 'confirmada' ? '' : v.payment_status === 'recebido' ? '<span class="selo recebido">recebido</span>' : diasAtraso(v.due_date) > 0 ? `<span class="selo vencido">${textoPrazo(v.due_date).toLowerCase()}</span>` : `<span class="selo aberto">a receber · ${textoPrazo(v.due_date).toLowerCase()}</span>`;
-async function telaOrcamentos() {
-  app.innerHTML = `<h1>Orçamentos</h1><div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><select id="st" style="flex:0 1 180px"><option value="">Todos</option><option>finalizado</option><option>vendido</option><option>rascunho</option></select></div>
+async function telaOrcamentos(modo) {
+  app.innerHTML = `${secao('orcamentos', '#/orcamentos/' + modo)}<div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><select id="st" style="flex:0 1 180px"><option value="">Todos</option><option>finalizado</option><option>vendido</option><option>rascunho</option></select></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="esconde-cel">Data</th><th class="esconde-cel">Vendedor</th><th class="num">Total</th><th>Status</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
     let qy = sb.from('quotes').select('*').order('created_at', { ascending: false }).limit(200);
     const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^[0-9]{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
-    if ($('#st').value) qy = qy.eq('status', $('#st').value);
+    if ($('#st').value) qy = qy.eq('status', $('#st').value); else if (modo === 'abertos') qy = qy.neq('status', 'vendido');
     const qs = await ok(qy);
     $('#lista').innerHTML = qs.map((q) => `<tr class="clica" onclick="location.hash='#/orcamento/${q.id}'"><td>${esc(q.number)}</td><td>${q.client_code ? `<small style="color:var(--muted)">${q.client_code}</small> ` : ""}${esc(q.client_name)}</td><td class="esconde-cel">${dataBR(q.date)}</td><td class="esconde-cel">${esc(q.employee_name || '')}</td><td class="num">${brl(q.total)}</td><td>${statusSelo(q.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum orçamento.</td></tr>';
   };
@@ -508,11 +540,12 @@ async function telaOrcamentos() {
 }
 
 // ---------- vendas ----------
-async function telaVendas() {
-  app.innerHTML = `<h1>Vendas</h1><div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><input id="mes" type="month" value="${hoje().slice(0, 7)}" style="flex:0 1 180px"></div>
+async function telaVendas(modo) {
+  app.innerHTML = `${secao('vendas', '#/vendas/' + modo)}<div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><input id="mes" type="month" value="${modo === 'devolvidas' ? '' : hoje().slice(0, 7)}" style="flex:0 1 180px"></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="esconde-cel">Data</th><th class="esconde-cel">Vendedor</th><th class="num">Total</th><th>Status</th></tr></thead><tbody id="lista"></tbody></table></div><p class="total" id="soma"></p>`;
   const carregar = async () => {
     const m = $('#mes').value; let qy = sb.from('sales').select('*').order('created_at', { ascending: false }).limit(500);
+    if (modo === 'devolvidas') qy = qy.eq('status', 'devolvida');
     if (m) { const [y, mm] = m.split('-').map(Number); qy = qy.gte('date', m + '-01').lte('date', m + '-' + new Date(y, mm, 0).getDate()); }
     const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^[0-9]{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
     const vs = await ok(qy);
@@ -551,7 +584,7 @@ async function telaVenda(id) {
 }
 
 // ---------- financeiro ----------
-const abasFinanceiro = (atual) => `<h1>Financeiro</h1><div class="abas"><a href="#/financeiro" class="${atual === 'resumo' ? 'ativa' : ''}">Resumo do mês</a><a href="#/financeiro/receber" class="${atual === 'receber' ? 'ativa' : ''}">A receber (em aberto)</a></div>`;
+const abasFinanceiro = (atual) => secao('financeiro', '#/financeiro/' + atual);
 async function telaFinanceiro() {
   const mesAtual = hoje().slice(0, 7);
   app.innerHTML = `${abasFinanceiro('resumo')}<div class="linha"><input id="mes" type="month" value="${mesAtual}" style="flex:0 1 200px"></div><div id="fin"></div>`;
@@ -606,16 +639,16 @@ async function telaAReceber() {
 }
 
 // ---------- admin ----------
-async function telaAdmin() {
+async function telaAdmin(modo) {
   if (!ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; }
   const [e, us] = await Promise.all([ok(sb.from('company_settings').select('*').eq('id', 1).single()), ok(sb.from('profiles').select('*').order('created_at'))]);
   const campo = (n, rot, extra = '') => `<div><label>${rot}</label><input name="${n}" value="${esc(e[n] ?? '')}" ${extra}></div>`;
-  app.innerHTML = `<h1>Administração</h1>
-  <div class="card"><h2 style="margin-top:0">Empresa</h2><form id="fe"><div class="linha">${campo('name', 'Nome')}${campo('cnpj', 'CNPJ')}</div><div class="linha">${campo('phone', 'Telefone')}${campo('email', 'E-mail')}</div>
+  app.innerHTML = `${secao('admin', '#/admin/' + modo)}
+  <div class="card" ${modo === 'empresa' ? '' : 'hidden'}><h2 style="margin-top:0">Empresa</h2><form id="fe"><div class="linha">${campo('name', 'Nome')}${campo('cnpj', 'CNPJ')}</div><div class="linha">${campo('phone', 'Telefone')}${campo('email', 'E-mail')}</div>
   <div class="linha">${campo('address', 'Endereço')}${campo('monthly_goal', 'Meta mensal (R$)', 'inputmode="decimal"')}</div>
   <label>Texto padrão no rodapé do orçamento</label><textarea name="observations_text">${esc(e.observations_text || '')}</textarea>
   <div class="acoes"><button class="btn pri">Salvar empresa</button></div></form></div>
-  <div class="card"><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Novos usuários se cadastram em "Criar acesso" na tela de login e aparecem aqui para você liberar.</p>
+  <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Novos usuários se cadastram em "Criar acesso" na tela de login e aparecem aqui para você liberar.</p>
   <div class="tabela"><table><thead><tr><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th></tr></thead><tbody>
   ${us.map((u) => `<tr data-id="${u.id}"><td>${esc(u.full_name)}</td><td class="esconde-cel">${esc(u.email)}</td>
     <td><select data-c="access_status" ${u.id === S.perfil.id ? 'disabled' : ''}><option ${u.access_status === 'liberado' ? 'selected' : ''}>liberado</option><option ${u.access_status === 'aguardando' ? 'selected' : ''}>aguardando</option></select></td>
