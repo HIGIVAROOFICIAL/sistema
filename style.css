@@ -1,5 +1,6 @@
 :root{--navy:#032344;--blue:#0a3a6b;--azul:#2f86de;--green:#6cc531;--green-d:#4f9a1f;--ink:#0d2a4a;--muted:#546a85;--line:#dfe7f0;--bg:#f4f7fb;--card:#fff;--red:#d64545;--amber:#e3a008}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.4}
 a{color:var(--azul)}
