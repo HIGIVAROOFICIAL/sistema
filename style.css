@@ -74,3 +74,12 @@ tr.clica:hover td{background:#f7fafd}
 .acoes.topo{margin:0 0 14px}
 /* Nome do cliente sempre em maiúsculas (o banco também garante). */
 #nome,#cnome{text-transform:uppercase}
+/* Janela de confirmação, abas do financeiro e selos de pagamento */
+.fundo-dialogo{position:fixed;inset:0;background:rgba(3,35,68,.45);z-index:30;display:flex;align-items:center;justify-content:center;padding:16px}
+.dialogo{width:100%;max-width:460px;max-height:90vh;overflow:auto;margin:0;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.abas{display:flex;gap:6px;margin:0 0 14px;border-bottom:2px solid var(--line)}
+.abas a{padding:9px 14px;text-decoration:none;color:var(--muted);font-weight:600;border-bottom:3px solid transparent;margin-bottom:-2px}
+.abas a.ativa{color:var(--azul);border-bottom-color:var(--azul)}
+.selo.recebido{background:#e5f6d8;color:var(--green-d)}
+.selo.aberto{background:#e3effc;color:var(--azul)}
+.selo.vencido{background:#fde4e4;color:var(--red)}

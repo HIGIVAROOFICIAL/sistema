@@ -36,6 +36,7 @@ const ROTAS = [
   [/^#\/vendas$/, telaVendas],
   [/^#\/venda\/([\w-]+)$/, telaVenda],
   [/^#\/financeiro$/, telaFinanceiro],
+  [/^#\/financeiro\/receber$/, telaAReceber],
   [/^#\/admin$/, telaAdmin],
 ];
 async function rotear() {
@@ -71,7 +72,7 @@ function montarMenu(h) {
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
   const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
   if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
-  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/'));
+  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
   $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
 }
@@ -453,16 +454,40 @@ async function confirmarVenda(q, itens) {
   const ids = itens.map((i) => i.product_id).filter(Boolean);
   const ps = ids.length ? await ok(sb.from('products').select('id,stock,description').in('id', ids)) : [];
   const falta = itens.filter((i) => { const p = ps.find((x) => x.id === i.product_id); return p && Number(i.quantity) > Number(p.stock); });
-  const msg = 'Confirmar a venda do orçamento nº ' + q.number + ' (' + brl(q.total) + ')?\nO estoque será baixado.' + (falta.length ? '\n\nATENÇÃO, estoque insuficiente:\n' + falta.map((i) => '• ' + i.description).join('\n') : '');
-  if (!confirm(msg)) return;
-  try { const vid = await ok(sb.rpc('registrar_venda', { p_quote: q.id })); aviso('Venda registrada.'); location.hash = '#/venda/' + vid; } catch (e) { falhou(e); }
+  // Janela de confirmação: forma de pagamento, se já foi recebido e vencimento (para o "a receber").
+  const venc30 = new Date(Date.now() + 30 * 864e5).toLocaleDateString('sv-SE');
+  const r = await dialogo(`<h2 style="margin-top:0">Confirmar venda do orçamento nº ${esc(q.number)}</h2>
+    <p><b>${esc(q.client_name)}</b> · total <b>${brl(q.total)}</b><br><small style="color:var(--muted)">O estoque será baixado.</small></p>
+    ${falta.length ? `<p style="color:var(--red)"><b>Atenção, estoque insuficiente:</b><br>${falta.map((i) => '• ' + esc(i.description)).join('<br>')}</p>` : ''}
+    <label>Forma de pagamento</label><select id="dForma">${FORMAS.map((f) => `<option>${f}</option>`).join('')}</select>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" id="dPago" style="width:auto"> Já foi recebido (pago agora)</label>
+    <div id="dVencBox"><label>Vencimento (fica em "a receber" até ser pago)</label><input type="date" id="dVenc" value="${venc30}"></div>`,
+    'Confirmar venda', () => ({ forma: $('#dForma').value, pago: $('#dPago').checked, venc: $('#dVenc').value }),
+    () => { const sinc = () => { const avista = ['Pix', 'Dinheiro', 'Cartão de débito'].includes($('#dForma').value); if (avista) $('#dPago').checked = true; $('#dVencBox').hidden = $('#dPago').checked; }; $('#dForma').onchange = sinc; $('#dPago').onchange = () => ($('#dVencBox').hidden = $('#dPago').checked); sinc(); });
+  if (!r) return;
+  try { const vid = await ok(sb.rpc('registrar_venda', { p_quote: q.id, p_forma: r.forma, p_pago: r.pago, p_vencimento: r.pago ? hoje() : r.venc || hoje() })); aviso('Venda registrada.'); location.hash = '#/venda/' + vid; } catch (e) { falhou(e); }
 }
+const FORMAS = ['Pix', 'Dinheiro', 'Cartão de débito', 'Cartão de crédito', 'Boleto', 'A prazo (fiado)', 'Transferência'];
+// Janela simples sobre a tela; devolve o que `ler()` retornar, ou null se cancelar.
+function dialogo(html, rotuloOk, ler, aoAbrir) {
+  return new Promise((fim) => {
+    const fundo = document.createElement('div'); fundo.className = 'fundo-dialogo';
+    fundo.innerHTML = `<div class="card dialogo">${html}<div class="acoes"><button class="btn pri" id="dOk">${rotuloOk}</button><button class="btn" id="dCancela">Cancelar</button></div></div>`;
+    document.body.appendChild(fundo); if (aoAbrir) aoAbrir();
+    const fechar = (v) => { fundo.remove(); fim(v); };
+    $('#dCancela').onclick = () => fechar(null);
+    fundo.onclick = (e) => { if (e.target === fundo) fechar(null); };
+    $('#dOk').onclick = () => fechar(ler ? ler() : true);
+  });
+}
+const diasAtraso = (venc) => Math.floor((new Date(hoje()) - new Date(String(venc).slice(0, 10))) / 864e5);
+const seloPagamento = (v) => v.status !== 'confirmada' ? '' : v.payment_status === 'recebido' ? '<span class="selo recebido">recebido</span>' : diasAtraso(v.due_date) > 0 ? `<span class="selo vencido">vencido ${diasAtraso(v.due_date)}d</span>` : '<span class="selo aberto">a receber</span>';
 async function telaOrcamentos() {
   app.innerHTML = `<h1>Orçamentos</h1><div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><select id="st" style="flex:0 1 180px"><option value="">Todos</option><option>finalizado</option><option>vendido</option><option>rascunho</option></select></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="esconde-cel">Data</th><th class="esconde-cel">Vendedor</th><th class="num">Total</th><th>Status</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
     let qy = sb.from('quotes').select('*').order('created_at', { ascending: false }).limit(200);
-    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^d{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
+    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^[0-9]{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
     if ($('#st').value) qy = qy.eq('status', $('#st').value);
     const qs = await ok(qy);
     $('#lista').innerHTML = qs.map((q) => `<tr class="clica" onclick="location.hash='#/orcamento/${q.id}'"><td>${esc(q.number)}</td><td>${q.client_code ? `<small style="color:var(--muted)">${q.client_code}</small> ` : ""}${esc(q.client_name)}</td><td class="esconde-cel">${dataBR(q.date)}</td><td class="esconde-cel">${esc(q.employee_name || '')}</td><td class="num">${brl(q.total)}</td><td>${statusSelo(q.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum orçamento.</td></tr>';
@@ -477,9 +502,9 @@ async function telaVendas() {
   const carregar = async () => {
     const m = $('#mes').value; let qy = sb.from('sales').select('*').order('created_at', { ascending: false }).limit(500);
     if (m) { const [y, mm] = m.split('-').map(Number); qy = qy.gte('date', m + '-01').lte('date', m + '-' + new Date(y, mm, 0).getDate()); }
-    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^d{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
+    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^[0-9]{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
     const vs = await ok(qy);
-    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${esc(v.number)}</td><td>${v.client_code ? `<small style="color:var(--muted)">${v.client_code}</small> ` : ""}${esc(v.client_name)}</td><td class="esconde-cel">${dataBR(v.date)}</td><td class="esconde-cel">${esc(v.employee_name || '')}</td><td class="num">${brl(v.total)}</td><td>${statusSelo(v.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma venda.</td></tr>';
+    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${esc(v.number)}</td><td>${v.client_code ? `<small style="color:var(--muted)">${v.client_code}</small> ` : ""}${esc(v.client_name)}</td><td class="esconde-cel">${dataBR(v.date)}</td><td class="esconde-cel">${esc(v.employee_name || '')}</td><td class="num">${brl(v.total)}</td><td>${statusSelo(v.status)} ${seloPagamento(v)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma venda.</td></tr>';
     $('#soma').textContent = 'Total confirmado: ' + brl(vs.filter((v) => v.status === 'confirmada').reduce((s, v) => s + Number(v.total), 0));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; carregar();
@@ -490,8 +515,23 @@ async function telaVenda(id) {
   <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
   <div class="card">${v.client_code ? `<span class="selo">cliente ${v.client_code}</span> ` : ""}<b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
   ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}</p>` : ''}</div>
+  ${v.status === 'confirmada' ? `<div class="card"><b>Pagamento</b> ${seloPagamento(v)}<br>
+    ${esc(v.payment_method || 'forma não informada')} · vencimento ${dataBR(v.due_date) || '—'}${v.payment_status === 'recebido' ? ` · recebido em ${dataBR(v.received_at)}${v.received_by ? ' por ' + esc(v.received_by) : ''}` : ''}
+    <div class="acoes">${v.payment_status === 'aberto' ? '<button class="btn pri" id="receber">Marcar como recebido</button><button class="btn" id="vencimento">Mudar vencimento</button>' : '<button class="btn" id="reabrir">Voltar para "a receber"</button>'}</div></div>` : ''}
   ${tabelaItens(itens, v.discount_percent)}`;
   $('#pdf').onclick = () => pdfDocumento('PEDIDO DE VENDA', v, itens).catch(falhou);
+  const atualizar = async (dados, msg) => { try { await ok(sb.from('sales').update(dados).eq('id', id)); aviso(msg); telaVenda(id); } catch (e) { falhou(e); } };
+  if ($('#receber')) $('#receber').onclick = async () => {
+    const r = await dialogo(`<h2 style="margin-top:0">Receber venda nº ${esc(v.number)}</h2><p>${esc(v.client_name)} · <b>${brl(v.total)}</b></p>
+      <label>Forma de pagamento</label><select id="dForma">${FORMAS.map((f) => `<option ${f === v.payment_method ? 'selected' : ''}>${f}</option>`).join('')}</select>
+      <label>Data do recebimento</label><input type="date" id="dData" value="${hoje()}">`, 'Confirmar recebimento', () => ({ forma: $('#dForma').value, data: $('#dData').value }));
+    if (r) atualizar({ payment_status: 'recebido', payment_method: r.forma, received_at: r.data || hoje(), received_by: S.perfil.full_name }, 'Recebimento registrado.');
+  };
+  if ($('#vencimento')) $('#vencimento').onclick = async () => {
+    const r = await dialogo(`<h2 style="margin-top:0">Novo vencimento</h2><input type="date" id="dVenc" value="${String(v.due_date || hoje()).slice(0, 10)}">`, 'Salvar', () => $('#dVenc').value);
+    if (r) atualizar({ due_date: r }, 'Vencimento alterado.');
+  };
+  if ($('#reabrir')) $('#reabrir').onclick = () => { if (confirm('Voltar a venda nº ' + v.number + ' para "a receber"?')) atualizar({ payment_status: 'aberto', received_at: null, received_by: null }, 'Venda voltou para "a receber".'); };
   if ($('#devolver')) $('#devolver').onclick = async () => {
     if (!confirm('Registrar a devolução da venda nº ' + v.number + '? O estoque volta e a venda sai do financeiro.')) return;
     try { await ok(sb.rpc('devolver_venda', { p_sale: id })); aviso('Devolução registrada.'); telaVenda(id); } catch (e) { falhou(e); }
@@ -499,9 +539,10 @@ async function telaVenda(id) {
 }
 
 // ---------- financeiro ----------
+const abasFinanceiro = (atual) => `<h1>Financeiro</h1><div class="abas"><a href="#/financeiro" class="${atual === 'resumo' ? 'ativa' : ''}">Resumo do mês</a><a href="#/financeiro/receber" class="${atual === 'receber' ? 'ativa' : ''}">A receber (em aberto)</a></div>`;
 async function telaFinanceiro() {
   const mesAtual = hoje().slice(0, 7);
-  app.innerHTML = `<h1>Financeiro</h1><div class="linha"><input id="mes" type="month" value="${mesAtual}" style="flex:0 1 200px"></div><div id="fin"></div>`;
+  app.innerHTML = `${abasFinanceiro('resumo')}<div class="linha"><input id="mes" type="month" value="${mesAtual}" style="flex:0 1 200px"></div><div id="fin"></div>`;
   const carregar = async () => {
     const m = $('#mes').value || mesAtual; const [y, mm] = m.split('-').map(Number);
     const ini6 = new Date(y, mm - 6, 1).toLocaleDateString('sv-SE'); const fim = m + '-' + new Date(y, mm, 0).getDate();
@@ -521,6 +562,35 @@ async function telaFinanceiro() {
       ${Object.entries(porFunc).sort((a, b) => b[1].t - a[1].t).map(([k, x]) => `<tr><td>${esc(k)}</td><td class="num">${x.n}</td><td class="num">${brl(x.t)}</td></tr>`).join('') || '<tr><td colspan="3" class="vazio">Sem vendas no mês.</td></tr>'}</tbody></table></div>`;
   };
   $('#mes').onchange = carregar; carregar();
+}
+
+// Contas a receber: vendas confirmadas ainda não pagas, por vencimento, com relatório em PDF.
+async function telaAReceber() {
+  app.innerHTML = `${abasFinanceiro('receber')}
+  <div class="linha"><input id="busca" placeholder="Filtrar por cliente, código ou nº da venda"><select id="sit" style="flex:0 1 200px"><option value="">Todas em aberto</option><option value="vencidas">Só vencidas</option><option value="avencer">Só a vencer</option></select></div>
+  <div class="acoes"><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
+  <div id="kpis" class="grade" style="margin-top:12px"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Venda</th><th>Cliente</th><th class="esconde-cel">Emissão</th><th>Vencimento</th><th class="esconde-cel">Forma</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let atual = [];
+  const carregar = async () => {
+    let qy = sb.from('sales').select('*').eq('status', 'confirmada').eq('payment_status', 'aberto').order('due_date').order('number').limit(2000);
+    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^[0-9]{1,4}$/.test(t) ? `,client_code.eq.${t}` : ''));
+    let vs = await ok(qy);
+    if ($('#sit').value === 'vencidas') vs = vs.filter((v) => diasAtraso(v.due_date) > 0);
+    if ($('#sit').value === 'avencer') vs = vs.filter((v) => diasAtraso(v.due_date) <= 0);
+    atual = vs;
+    const soma = (l) => l.reduce((s, v) => s + Number(v.total), 0);
+    const venc = vs.filter((v) => diasAtraso(v.due_date) > 0);
+    const clientes = new Set(vs.map((v) => v.client_code || v.client_name)).size;
+    $('#kpis').innerHTML = `<div class="kpi"><small>Total em aberto</small><strong>${brl(soma(vs))}</strong></div>
+      <div class="kpi"><small>Vencido</small><strong style="color:var(--red)">${brl(soma(venc))}</strong></div>
+      <div class="kpi"><small>A vencer</small><strong>${brl(soma(vs) - soma(venc))}</strong></div>
+      <div class="kpi"><small>Vendas / clientes</small><strong>${vs.length} / ${clientes}</strong></div>`;
+    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${esc(v.number)}</td><td>${v.client_code ? `<small style="color:var(--muted)">${v.client_code}</small> ` : ''}${esc(v.client_name)}</td><td class="esconde-cel">${dataBR(v.date)}</td><td>${dataBR(v.due_date)}</td><td class="esconde-cel">${esc(v.payment_method || '')}</td><td class="num"><b>${brl(v.total)}</b></td><td>${seloPagamento(v)}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nada em aberto. 🎉</td></tr>';
+  };
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#sit').onchange = carregar;
+  $('#relatorio').onclick = () => pdfReceber(atual, [$('#busca').value.trim() && 'Filtro: ' + $('#busca').value.trim(), $('#sit').selectedOptions[0].text].filter(Boolean).join(' • ')).catch(falhou);
+  carregar();
 }
 
 // ---------- admin ----------
@@ -580,6 +650,69 @@ async function carregarLogo() {
   } catch { logoData = null; }
   return logoData;
 }
+// Cabeçalho padrão dos PDFs: faixa na cor da logo, logo 3:2, contatos da empresa e título à direita.
+function cabecalhoPdf(pdf, c, logo, titulo, linha2, linha3) {
+  const M = 12, VERDE = [108, 197, 49];
+  const txt = (t, x, y, o = {}) => { pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(o.s || 9); pdf.setTextColor(...(o.c || [255, 255, 255])); pdf.text(String(t ?? ''), x, y, o.a ? { align: o.a } : undefined); };
+  pdf.setFillColor(...logoCor); pdf.rect(0, 0, 210, 40, 'F');
+  pdf.setFillColor(...VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
+  if (logo) pdf.addImage(logo, 'JPEG', M - 2, 7, 39, 26);
+  const xEmp = logo ? M + 44 : M;
+  if (logo) { pdf.setDrawColor(60, 95, 140); pdf.setLineWidth(0.3); pdf.line(xEmp - 3, 9, xEmp - 3, 33); }
+  else txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true });
+  const contatos = [[c.cnpj && 'CNPJ', c.cnpj], ['WhatsApp', c.phone], ['E-mail', c.email], ['Site', 'higivarooficial.github.io'], [c.address && 'Endereço', c.address]].filter(([r, v]) => r && v);
+  contatos.forEach(([r, v], k) => { txt(r.toUpperCase(), xEmp, 12.5 + k * 5.2, { s: 6, b: true, c: [130, 170, 210] }); txt(v, xEmp + 16, 12.5 + k * 5.2, { s: 8, c: [225, 236, 248] }); });
+  txt(titulo, 210 - M, 15, { s: titulo.length > 18 ? 12.5 : 15, b: true, a: 'right' });
+  if (linha2) txt(linha2, 210 - M, 23, { s: 13, b: true, c: VERDE, a: 'right' });
+  if (linha3) txt(linha3, 210 - M, 29.5, { s: 8, c: [220, 232, 245], a: 'right' });
+}
+function rodapePdf(pdf, c) {
+  const M = 12, n = pdf.internal.getNumberOfPages();
+  for (let p = 1; p <= n; p++) {
+    pdf.setPage(p); pdf.setDrawColor(223, 231, 240); pdf.setLineWidth(0.3); pdf.line(M, 284, 210 - M, 284);
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.5); pdf.setTextColor(47, 134, 222); pdf.text('HIGIVARO  •  Qualidade  •  Variedade  •  Confiança', M, 288.5);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(96, 114, 138); pdf.text('WhatsApp ' + (c.phone || '') + '   •   higivarooficial.github.io', M, 292.5);
+    pdf.setFontSize(7.5); pdf.text(`Página ${p} de ${n}`, 210 - M, 290.5, { align: 'right' });
+  }
+}
+// Relatório de contas a receber (o que está em aberto), agrupado por vencimento.
+async function pdfReceber(vendas, filtro) {
+  const c = S.empresa || {};
+  const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const logo = await carregarLogo();
+  const M = 12, L = 186, NAVY = [3, 35, 68], TINTA = [13, 42, 74], CINZA = [96, 114, 138], LINHA = [223, 231, 240], FUNDO = [244, 247, 251], VERMELHO = [200, 55, 55];
+  const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17).replace(',', ' às');
+  cabecalhoPdf(pdf, c, logo, 'CONTAS A RECEBER', 'Em aberto', 'Gerado em ' + agora);
+  const soma = (l) => l.reduce((s, v) => s + Number(v.total), 0);
+  const venc = vendas.filter((v) => diasAtraso(v.due_date) > 0);
+  // Quadros de resumo
+  let y = 48; const w = (L - 9) / 4;
+  [['Total em aberto', brl(soma(vendas)), TINTA], ['Vencido', brl(soma(venc)), VERMELHO], ['A vencer', brl(soma(vendas) - soma(venc)), TINTA], ['Vendas / clientes', `${vendas.length} / ${new Set(vendas.map((v) => v.client_code || v.client_name)).size}`, TINTA]].forEach(([r, v, cor], k) => {
+    const x = M + k * (w + 3); pdf.setFillColor(...FUNDO); pdf.setDrawColor(...LINHA); pdf.roundedRect(x, y, w, 17, 2, 2, 'FD');
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...CINZA); pdf.text(r.toUpperCase(), x + 4, y + 6);
+    pdf.setFontSize(12); pdf.setTextColor(...cor); pdf.text(v, x + 4, y + 13);
+  });
+  y += 22;
+  if (filtro) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...CINZA); pdf.text(filtro, M, y); y += 4; }
+  pdf.autoTable({
+    startY: y + 1, margin: { left: M, right: M, top: 20, bottom: 22 },
+    head: [['Venda', 'Cód.', 'Cliente', 'Telefone', 'Emissão', 'Vencimento', 'Atraso', 'Forma', 'Valor']],
+    body: vendas.map((v) => { const d = diasAtraso(v.due_date); return [v.number, v.client_code || '', v.client_name, v.client_phone || '', dataBR(v.date), dataBR(v.due_date), d > 0 ? d + ' dias' : d === 0 ? 'hoje' : 'em ' + -d + 'd', v.payment_method || '', brl(v.total)]; }),
+    foot: [[{ content: `TOTAL EM ABERTO (${vendas.length} vendas)`, colSpan: 8, styles: { halign: 'right' } }, brl(soma(vendas))]],
+    theme: 'plain',
+    styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 2, bottom: 2, left: 1.6, right: 1.6 }, textColor: TINTA, lineColor: LINHA, lineWidth: { bottom: 0.2 }, valign: 'middle' },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.3, lineWidth: 0 },
+    footStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
+    alternateRowStyles: { fillColor: [248, 250, 253] },
+    columnStyles: { 0: { cellWidth: 15 }, 1: { cellWidth: 10, textColor: CINZA }, 3: { cellWidth: 25 }, 4: { cellWidth: 17 }, 5: { cellWidth: 18, fontStyle: 'bold' }, 6: { cellWidth: 15 }, 7: { cellWidth: 22 }, 8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: (d) => { if (d.section === 'body' && d.column.index === 6 && String(d.cell.raw).endsWith('dias')) { d.cell.styles.textColor = VERMELHO; d.cell.styles.fontStyle = 'bold'; } if (d.section === 'head' && d.column.index === 8) d.cell.styles.halign = 'right'; },
+    didDrawPage: (d) => { if (d.pageNumber > 1) { pdf.setFillColor(...NAVY); pdf.rect(0, 0, 210, 14, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text('HIGIVARO  •  Contas a receber  •  ' + agora, M, 9); } },
+  });
+  if (!vendas.length) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...CINZA); pdf.text('Nenhuma venda em aberto.', 105, y + 25, { align: 'center' }); }
+  rodapePdf(pdf, c);
+  pdf.save(`Contas-a-receber-${hoje()}.pdf`);
+}
+
 // PDF profissional (orçamento e venda): cabeçalho azul com logo, quadro do cliente, tabela listrada, totais em destaque e rodapé com página.
 async function pdfDocumento(titulo, doc, itens, empresa) {
   const c = empresa || S.empresa || {};
@@ -592,19 +725,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   const txt = (t, x, y, o = {}) => { pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(o.s || 9); cor('setTextColor', o.c || TINTA); pdf.text(String(t ?? ''), x, y, o.a ? { align: o.a } : undefined); };
   const rotulo = (t, x, y) => txt(String(t).toUpperCase(), x, y, { s: 6.5, b: true, c: CINZA });
 
-  // Cabeçalho
-  cor('setFillColor', logoCor); pdf.rect(0, 0, 210, 40, 'F');
-  cor('setFillColor', VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
-  // Logo inteira (com nome e lema), proporção 3:2, à esquerda; contatos ao lado, separados por um fio.
-  if (logo) pdf.addImage(logo, 'JPEG', M - 2, 7, 39, 26);
-  const xEmp = logo ? M + 44 : M;
-  if (logo) { cor('setDrawColor', [60, 95, 140]); pdf.setLineWidth(0.3); pdf.line(xEmp - 3, 9, xEmp - 3, 33); }
-  else txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true, c: [255, 255, 255] });
-  const contatos = [[c.cnpj && 'CNPJ', c.cnpj], ['WhatsApp', c.phone], ['E-mail', c.email], ['Site', 'higivarooficial.github.io'], [c.address && 'Endereço', c.address]].filter(([r, v]) => r && v);
-  contatos.forEach(([r, v], k) => { txt(r.toUpperCase(), xEmp, 12.5 + k * 5.2, { s: 6, b: true, c: [130, 170, 210] }); txt(v, xEmp + 16, 12.5 + k * 5.2, { s: 8, c: [225, 236, 248] }); });
-  txt(ehVenda ? 'PEDIDO DE VENDA' : 'ORÇAMENTO', 210 - M, 15, { s: 15, b: true, c: [255, 255, 255], a: 'right' });
-  txt('Nº ' + doc.number, 210 - M, 23, { s: 13, b: true, c: VERDE, a: 'right' });
-  txt(`Emissão: ${dataBR(doc.date)}${doc.time ? ' às ' + doc.time : ''}`, 210 - M, 29.5, { s: 8, c: [220, 232, 245], a: 'right' });
+  cabecalhoPdf(pdf, c, logo, ehVenda ? 'PEDIDO DE VENDA' : 'ORÇAMENTO', 'Nº ' + doc.number, `Emissão: ${dataBR(doc.date)}${doc.time ? ' às ' + doc.time : ''}`);
 
   // Quadro do cliente
   let y = 48;
