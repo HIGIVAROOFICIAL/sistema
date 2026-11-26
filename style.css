@@ -89,3 +89,6 @@ tr.clica:hover td{background:#f7fafd}
 .atalhos a svg{width:40px;height:40px;flex:0 0 auto;color:var(--azul)}
 .atalhos a:hover{border-color:var(--azul);background:#f3f8fe}
 .atalhos a.ativo{border-color:var(--azul);background:#e8f2fd;color:var(--azul)}
+/* Tela inicial: só a logo, centralizada; "multiply" faz o fundo branco da logo sumir no fundo da tela */
+.inicio-logo{min-height:calc(100vh - 190px);display:flex;align-items:center;justify-content:center;padding:20px}
+.inicio-logo img{width:min(560px,86vw);height:auto;mix-blend-mode:multiply}

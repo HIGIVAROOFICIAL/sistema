@@ -99,7 +99,7 @@ async function telaSecao(nome) { if (nome === 'admin' && !ehAdmin()) { app.inner
 function montarMenu(h) {
   $('#topo').hidden = false;
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
-  const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
+  const itens = [['#/', 'Início', 'inicio'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
   if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
   const ativo = (href) => h === href || (href !== '#/' && h.startsWith(href + '/')) || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
@@ -172,24 +172,9 @@ function telaTrocarSenha(obrigatoria) {
 sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') telaTrocarSenha(false); });
 
 // ---------- início ----------
+// Tela inicial: só a logo da HIGIVARO (versão branca, o fundo branco se mistura ao da tela, sem recorte).
 async function telaInicio() {
-  const mes = hoje().slice(0, 7);
-  const [orc, ven] = await Promise.all([
-    ok(sb.from('quotes').select('id', { count: 'exact', head: true }).neq('status', 'vendido')),
-    ok(sb.from('sales').select('total').eq('status', 'confirmada').gte('date', mes + '-01')),
-  ]).catch(() => [null, []]);
-  const fat = (ven || []).reduce((s, v) => s + Number(v.total), 0);
-  app.innerHTML = `<h1>Olá, ${esc(S.perfil.full_name || '')}</h1>
-  <a class="btn pri grande" href="#/orcamento/novo">＋ Novo orçamento</a>
-  <div class="grade" style="margin-top:14px">
-    <a class="kpi" href="#/financeiro" style="text-decoration:none;color:inherit"><small>Vendas do mês</small><strong>${brl(fat)}</strong></a>
-    <a class="kpi" href="#/orcamentos" style="text-decoration:none;color:inherit"><small>Orçamentos em aberto</small><strong>${S.orcAbertos ?? ''}</strong></a>
-  </div>
-  <div class="grade" style="margin-top:14px">
-    <a class="btn" href="#/produtos">Consultar produtos</a><a class="btn" href="#/orcamentos">Orçamentos gerados</a><a class="btn" href="#/vendas">Vendas</a>
-  </div>`;
-  const { count } = await sb.from('quotes').select('id', { count: 'exact', head: true }).neq('status', 'vendido');
-  $$('.kpi strong')[1].textContent = count ?? 0;
+  app.innerHTML = `<div class="inicio-logo"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>`;
 }
 
 // ---------- produtos ----------
