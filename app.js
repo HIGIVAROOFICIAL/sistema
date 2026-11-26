@@ -447,9 +447,10 @@ async function carregarLogo() {
   // Reduz a logo para JPEG de 360 px: o PDF fica leve (bom para mandar no WhatsApp).
   try {
     const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = 'logo.png'; });
-    const cv = document.createElement('canvas'); cv.width = cv.height = 360; const g = cv.getContext('2d');
-    g.fillStyle = '#032344'; g.fillRect(0, 0, 360, 360); g.drawImage(img, 0, 0, 360, 360);
-    logoData = cv.toDataURL('image/jpeg', 0.88);
+    // A logo é retangular (3:2): mantém a proporção e boa resolução.
+    const cv = document.createElement('canvas'); cv.width = 900; cv.height = 600; const g = cv.getContext('2d');
+    g.drawImage(img, 0, 0, 900, 600);
+    logoData = cv.toDataURL('image/jpeg', 0.92);
   } catch { logoData = null; }
   return logoData;
 }
@@ -466,15 +467,15 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   const rotulo = (t, x, y) => txt(String(t).toUpperCase(), x, y, { s: 6.5, b: true, c: CINZA });
 
   // Cabeçalho
-  cor('setFillColor', NAVY); pdf.rect(0, 0, 210, 40, 'F');
+  cor('setFillColor', [2, 32, 66]); pdf.rect(0, 0, 210, 40, 'F');
   cor('setFillColor', VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
-  if (logo) pdf.addImage(logo, 'JPEG', M, 7, 26, 26);
-  const xEmp = logo ? M + 31 : M;
-  txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true, c: [255, 255, 255] });
-  txt('Distribuidora de produtos de limpeza e higiene', xEmp, 20.5, { s: 8.5, c: [170, 200, 230] });
-  txt([c.cnpj && 'CNPJ ' + c.cnpj, c.phone].filter(Boolean).join('   •   '), xEmp, 26.5, { s: 8, c: [220, 232, 245] });
-  txt([c.email, 'higivarooficial.github.io'].filter(Boolean).join('   •   '), xEmp, 31, { s: 8, c: [220, 232, 245] });
-  if (c.address) txt(c.address, xEmp, 35.5, { s: 7.5, c: [170, 200, 230] });
+  // Logo inteira (com nome e lema), proporção 3:2, à esquerda; contatos ao lado, separados por um fio.
+  if (logo) pdf.addImage(logo, 'JPEG', 4, 1.5, 55.5, 37);
+  const xEmp = logo ? 64 : M;
+  if (logo) { cor('setDrawColor', [60, 95, 140]); pdf.setLineWidth(0.3); pdf.line(xEmp - 3, 9, xEmp - 3, 33); }
+  else txt(c.name || 'HIGIVARO', xEmp, 15, { s: 18, b: true, c: [255, 255, 255] });
+  const contatos = [[c.cnpj && 'CNPJ', c.cnpj], ['WhatsApp', c.phone], ['E-mail', c.email], ['Site', 'higivarooficial.github.io'], [c.address && 'Endereço', c.address]].filter(([r, v]) => r && v);
+  contatos.forEach(([r, v], k) => { txt(r.toUpperCase(), xEmp, 12.5 + k * 5.2, { s: 6, b: true, c: [130, 170, 210] }); txt(v, xEmp + 16, 12.5 + k * 5.2, { s: 8, c: [225, 236, 248] }); });
   txt(ehVenda ? 'PEDIDO DE VENDA' : 'ORÇAMENTO', 210 - M, 15, { s: 15, b: true, c: [255, 255, 255], a: 'right' });
   txt('Nº ' + doc.number, 210 - M, 23, { s: 13, b: true, c: VERDE, a: 'right' });
   txt(`Emissão: ${dataBR(doc.date)}${doc.time ? ' às ' + doc.time : ''}`, 210 - M, 29.5, { s: 8, c: [220, 232, 245], a: 'right' });
@@ -540,11 +541,16 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
     rotulo('Observações', M, y + 2); txt(linhas, M, y + 7, { s: 8.3 }); y += 9 + linhas.length * 4;
   }
   if (ehVenda) {
-    if (y + 24 > 275) { pdf.addPage(); y = 22; }
-    y += 14; cor('setDrawColor', CINZA); pdf.setLineWidth(0.3);
-    pdf.line(M, y, M + 95, y); pdf.line(M + 115, y, 210 - M, y);
-    txt('Assinatura do cliente (recebi os produtos acima)', M, y + 4.5, { s: 7.5, c: CINZA });
-    txt('Data do recebimento', M + 115, y + 4.5, { s: 7.5, c: CINZA });
+    // Assinaturas: cliente (recebimento) e vendedor, com nome embaixo e data.
+    if (y + 40 > 278) { pdf.addPage(); y = 22; }
+    txt('Declaro que recebi os produtos acima em perfeito estado e nas quantidades indicadas.', M, y + 6, { s: 8, c: CINZA });
+    txt('Data do recebimento: ____ / ____ / ________', M, y + 12, { s: 8, c: CINZA });
+    y += 30; const w = (L - 14) / 2; cor('setDrawColor', TINTA); pdf.setLineWidth(0.35);
+    [[M, 'ASSINATURA DO CLIENTE', doc.client_name], [M + w + 14, 'ASSINATURA DO VENDEDOR', doc.employee_name]].forEach(([x, r, nome]) => {
+      pdf.line(x, y, x + w, y);
+      txt(r, x + w / 2, y + 4.5, { s: 6.8, b: true, c: CINZA, a: 'center' });
+      txt(pdf.splitTextToSize(String(nome || ''), w)[0] || '', x + w / 2, y + 9, { s: 8.3, a: 'center' });
+    });
   }
 
   // Rodapé com numeração em todas as páginas
