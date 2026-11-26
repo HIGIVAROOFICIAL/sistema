@@ -481,7 +481,9 @@ function dialogo(html, rotuloOk, ler, aoAbrir) {
   });
 }
 const diasAtraso = (venc) => Math.floor((new Date(hoje()) - new Date(String(venc).slice(0, 10))) / 864e5);
-const seloPagamento = (v) => v.status !== 'confirmada' ? '' : v.payment_status === 'recebido' ? '<span class="selo recebido">recebido</span>' : diasAtraso(v.due_date) > 0 ? `<span class="selo vencido">vencido ${diasAtraso(v.due_date)}d</span>` : '<span class="selo aberto">a receber</span>';
+// Texto claro do prazo: "Vencida há 3 dias", "Vence hoje" ou "Faltam 34 dias".
+const textoPrazo = (venc) => { const d = diasAtraso(venc); return d > 0 ? `Vencida há ${d} ${d === 1 ? 'dia' : 'dias'}` : d === 0 ? 'Vence hoje' : `Faltam ${-d} ${d === -1 ? 'dia' : 'dias'}`; };
+const seloPagamento = (v) => v.status !== 'confirmada' ? '' : v.payment_status === 'recebido' ? '<span class="selo recebido">recebido</span>' : diasAtraso(v.due_date) > 0 ? `<span class="selo vencido">${textoPrazo(v.due_date).toLowerCase()}</span>` : `<span class="selo aberto">a receber · ${textoPrazo(v.due_date).toLowerCase()}</span>`;
 async function telaOrcamentos() {
   app.innerHTML = `<h1>Orçamentos</h1><div class="linha"><input id="busca" placeholder="Buscar cliente ou número"><select id="st" style="flex:0 1 180px"><option value="">Todos</option><option>finalizado</option><option>vendido</option><option>rascunho</option></select></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="esconde-cel">Data</th><th class="esconde-cel">Vendedor</th><th class="num">Total</th><th>Status</th></tr></thead><tbody id="lista"></tbody></table></div>`;
@@ -696,16 +698,17 @@ async function pdfReceber(vendas, filtro) {
   if (filtro) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...CINZA); pdf.text(filtro, M, y); y += 4; }
   pdf.autoTable({
     startY: y + 1, margin: { left: M, right: M, top: 20, bottom: 22 },
-    head: [['Venda', 'Cód.', 'Cliente', 'Telefone', 'Emissão', 'Vencimento', 'Atraso', 'Forma', 'Valor']],
-    body: vendas.map((v) => { const d = diasAtraso(v.due_date); return [v.number, v.client_code || '', v.client_name, v.client_phone || '', dataBR(v.date), dataBR(v.due_date), d > 0 ? d + ' dias' : d === 0 ? 'hoje' : 'em ' + -d + 'd', v.payment_method || '', brl(v.total)]; }),
-    foot: [[{ content: `TOTAL EM ABERTO (${vendas.length} vendas)`, colSpan: 8, styles: { halign: 'right' } }, brl(soma(vendas))]],
+    head: [['Venda', 'Cód.', 'Cliente', 'Telefone', 'Emissão', 'Vencimento', 'Situação', 'Forma', 'Valor']],
+    body: vendas.map((v) => [v.number, v.client_code || '', v.client_name, v.client_phone || '', dataBR(v.date), dataBR(v.due_date), textoPrazo(v.due_date), v.payment_method || '', brl(v.total)]),
+    foot: [[{ content: `TOTAL EM ABERTO (${vendas.length} ${vendas.length === 1 ? 'venda' : 'vendas'})`, colSpan: 8, styles: { halign: 'right' } }, brl(soma(vendas))]],
     theme: 'plain',
     styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 2, bottom: 2, left: 1.6, right: 1.6 }, textColor: TINTA, lineColor: LINHA, lineWidth: { bottom: 0.2 }, valign: 'middle' },
     headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.3, lineWidth: 0 },
     footStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
     alternateRowStyles: { fillColor: [248, 250, 253] },
-    columnStyles: { 0: { cellWidth: 15 }, 1: { cellWidth: 10, textColor: CINZA }, 3: { cellWidth: 25 }, 4: { cellWidth: 17 }, 5: { cellWidth: 18, fontStyle: 'bold' }, 6: { cellWidth: 15 }, 7: { cellWidth: 22 }, 8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' } },
-    didParseCell: (d) => { if (d.section === 'body' && d.column.index === 6 && String(d.cell.raw).endsWith('dias')) { d.cell.styles.textColor = VERMELHO; d.cell.styles.fontStyle = 'bold'; } if (d.section === 'head' && d.column.index === 8) d.cell.styles.halign = 'right'; },
+    columnStyles: { 0: { cellWidth: 15 }, 1: { cellWidth: 10, textColor: CINZA }, 3: { cellWidth: 23 }, 4: { cellWidth: 16 }, 5: { cellWidth: 18, fontStyle: "bold" }, 6: { cellWidth: 23 }, 7: { cellWidth: 19 }, 8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: (d) => {
+      if (d.section === 'body' && d.column.index === 6) { const t = String(d.cell.raw); d.cell.styles.fontStyle = 'bold'; d.cell.styles.textColor = t.startsWith('Vencida') ? VERMELHO : t.startsWith('Vence hoje') ? [190, 120, 0] : [60, 140, 30]; } if (d.section === 'head' && d.column.index === 8) d.cell.styles.halign = 'right'; },
     didDrawPage: (d) => { if (d.pageNumber > 1) { pdf.setFillColor(...NAVY); pdf.rect(0, 0, 210, 14, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text('HIGIVARO  •  Contas a receber  •  ' + agora, M, 9); } },
   });
   if (!vendas.length) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...CINZA); pdf.text('Nenhuma venda em aberto.', 105, y + 25, { align: 'center' }); }
