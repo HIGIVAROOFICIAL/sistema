@@ -316,10 +316,15 @@ async function telaEditorOrcamento(id, codCliente) {
     <div style="flex:2 1 260px"><label>Nome / Razão social</label><input id="nome" value="${esc(q.client_name)}"></div></div>
     <div class="linha"><div><label>Telefone / WhatsApp</label><input id="fone" value="${esc(q.client_phone)}" inputmode="tel"></div><div><label>E-mail</label><input id="email" value="${esc(q.client_email)}" type="email"></div></div>
     <label>Observações</label><textarea id="obs">${esc(q.observations)}</textarea></div>
+  <p class="vazio card" id="avisoCli">👆 Preencha o cliente (código, busca ou nome) para adicionar os produtos.</p>
+  <div id="etapaProd" hidden>
   <div class="card"><h2 style="margin-top:0">Produtos</h2><input id="bp" placeholder="Palavras-chave do produto (ex.: detergente 5l) • do mais barato ao mais caro"><div id="sug"></div>
     <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço un.</th><th class="num">Total</th><th></th></tr></thead><tbody id="carrinho"></tbody></table></div>
     <div class="linha" style="margin-top:12px"><div><label>Desconto (%)</label><input id="desc" inputmode="decimal" value="${String(q.discount_percent || 0).replace('.', ',')}"></div><div class="total" id="tot"></div></div></div>
-  <div class="acoes"><button class="btn pri grande" id="salvar">Salvar orçamento</button></div>`;
+  <div class="acoes"><button class="btn pri grande" id="salvar">Salvar orçamento</button></div></div>`;
+  // Os produtos só aparecem depois que o cliente estiver preenchido (nome com pelo menos 3 letras).
+  const etapa = () => { const okCli = $('#nome').value.trim().length >= 3; const antes = $('#etapaProd').hidden; $('#etapaProd').hidden = !okCli; $('#avisoCli').hidden = okCli; if (antes && okCli && !id) setTimeout(() => $('#bp').focus(), 50); };
+  $('#nome').addEventListener('input', etapa);
 
   const desenhar = () => {
     $('#carrinho').innerHTML = itens.map((i, n) => `<tr><td>${esc(i.description)}<br><small style="color:var(--muted)">${esc(i.code)} · ${esc(i.brand || '')} · ${esc(i.unit || '')}</small></td>
@@ -352,6 +357,7 @@ async function telaEditorOrcamento(id, codCliente) {
   const preencher = (c) => {
     clienteId = c.id; $('#ccod').value = c.code; $('#nome').value = c.name || ''; $('#doc').value = c.doc || '';
     $('#fone').value = c.phone || ''; $('#email').value = c.email || ''; $('#codst').textContent = '· ok'; $('#bcli').value = ''; $('#sugcli').innerHTML = '';
+    etapa();
   };
   let tc;
   $('#ccod').oninput = () => {
@@ -387,8 +393,9 @@ async function telaEditorOrcamento(id, codCliente) {
     const d = await buscarCnpj(c);
     if (!d) { st.textContent = '· CNPJ não encontrado'; return; }
     $('#nome').value = d.nome; if (d.email) $('#email').value = d.email; if (d.fone) $('#fone').value = d.fone;
-    st.textContent = '· ' + d.situacao;
+    st.textContent = '· ' + d.situacao; etapa();
   };
+  etapa();
   if (codCliente) { const c = await ok(sb.from('clients').select('*').eq('code', Number(codCliente)).maybeSingle()); if (c) preencher(c); }
   $('#salvar').onclick = async () => {
     if (!$('#nome').value.trim()) return aviso('Informe o nome do cliente.', true);
