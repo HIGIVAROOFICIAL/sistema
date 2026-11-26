@@ -163,15 +163,17 @@ async function telaInicio() {
 }
 
 // ---------- produtos ----------
+// Busca por palavras-chave: cada palavra precisa aparecer (em qualquer ordem) no código, descrição, marca ou unidade,
+// sem diferenciar acento e maiúscula. Resultado do mais barato para o mais caro.
+const semAcento = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 async function buscarProdutos(t, limite = 30) {
-  let q = sb.from('products').select('*').order('description').limit(limite);
-  t = limpaBusca(t);
-  if (t) q = q.or(`description.ilike.%${t}%,code.ilike.%${t}%,brand.ilike.%${t}%`);
+  let q = sb.from('products').select('*').order('price', { ascending: true }).order('description').limit(limite);
+  for (const p of semAcento(limpaBusca(t)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
   return ok(q);
 }
 async function telaProdutos() {
   app.innerHTML = `<h1>Produtos</h1>
-  <div class="linha"><input id="busca" placeholder="Buscar por descrição, código ou marca"></div>
+  <div class="linha"><input id="busca" placeholder="Palavras-chave (ex.: agua 5l candeias) • do mais barato ao mais caro"></div>
   ${ehAdmin() ? `<div class="acoes"><button class="btn azul" id="novo">＋ Produto</button><label class="btn" style="margin:0">Importar planilha (CSV)<input type="file" id="csv" accept=".csv,text/csv" hidden></label></div>` : ''}
   <div id="form"></div><div class="tabela" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Descrição</th><th class="esconde-cel">Marca</th><th>Un.</th><th class="num">Estoque</th><th class="num">Preço</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
@@ -314,7 +316,7 @@ async function telaEditorOrcamento(id, codCliente) {
     <div style="flex:2 1 260px"><label>Nome / Razão social</label><input id="nome" value="${esc(q.client_name)}"></div></div>
     <div class="linha"><div><label>Telefone / WhatsApp</label><input id="fone" value="${esc(q.client_phone)}" inputmode="tel"></div><div><label>E-mail</label><input id="email" value="${esc(q.client_email)}" type="email"></div></div>
     <label>Observações</label><textarea id="obs">${esc(q.observations)}</textarea></div>
-  <div class="card"><h2 style="margin-top:0">Produtos</h2><input id="bp" placeholder="Digite para buscar o produto (nome, código ou marca)"><div id="sug"></div>
+  <div class="card"><h2 style="margin-top:0">Produtos</h2><input id="bp" placeholder="Palavras-chave do produto (ex.: detergente 5l) • do mais barato ao mais caro"><div id="sug"></div>
     <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço un.</th><th class="num">Total</th><th></th></tr></thead><tbody id="carrinho"></tbody></table></div>
     <div class="linha" style="margin-top:12px"><div><label>Desconto (%)</label><input id="desc" inputmode="decimal" value="${String(q.discount_percent || 0).replace('.', ',')}"></div><div class="total" id="tot"></div></div></div>
   <div class="acoes"><button class="btn pri grande" id="salvar">Salvar orçamento</button></div>`;
@@ -335,7 +337,7 @@ async function telaEditorOrcamento(id, codCliente) {
     clearTimeout(t);
     t = setTimeout(async () => {
       const termo = $('#bp').value; if (termo.trim().length < 2) return ($('#sug').innerHTML = '');
-      const ps = await buscarProdutos(termo, 15);
+      const ps = await buscarProdutos(termo, 25);
       $('#sug').innerHTML = ps.length ? `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.description)}</b><br><small>${esc(p.code)} · ${esc(p.brand || '')} · estoque ${p.stock} · ${brl(p.price)}</small></div>`).join('')}</div>` : '<p class="vazio">Nada encontrado.</p>';
       $$('#sug [data-id]').forEach((d) => (d.onclick = () => {
         const p = ps.find((x) => x.id === d.dataset.id);
