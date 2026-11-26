@@ -419,15 +419,15 @@ async function telaOrcamento(id) {
   const venda = q.status === 'vendido' ? await ok(sb.from('sales').select('id,number').eq('quote_id', id).eq('status', 'confirmada').maybeSingle()) : null;
   const link = location.origin + location.pathname + '#/o/' + id;
   app.innerHTML = `<h1>Orçamento nº ${esc(q.number)} ${statusSelo(q.status)}</h1>
-  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small>${q.observations ? `<p>${esc(q.observations)}</p>` : ''}</div>
-  ${tabelaItens(itens, q.discount_percent)}
-  <div class="acoes">
+  <div class="acoes topo">
     <button class="btn azul" id="pdf">PDF do orçamento</button>
     <a class="btn" target="_blank" href="https://wa.me/${soDig(q.client_phone).length >= 10 ? '55' + soDig(q.client_phone).replace(/^55/, '') : ''}?text=${encodeURIComponent('Olá! Segue o orçamento nº ' + q.number + ' da HIGIVARO: ' + link)}">Enviar no WhatsApp</a>
     <button class="btn" id="copiar">Copiar link</button>
     ${q.status !== 'vendido' ? '<a class="btn" href="#/orcamento/' + id + '/editar">Editar</a><button class="btn pri" id="vender">Confirmar venda</button>' : venda ? `<a class="btn" href="#/venda/${venda.id}">Ver venda nº ${esc(venda.number)}</a>` : ''}
     ${ehAdmin() && q.status !== 'vendido' ? '<button class="btn perigo" id="apagar">Excluir</button>' : ''}
   </div>
+  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small>${q.observations ? `<p>${esc(q.observations)}</p>` : ''}</div>
+  ${tabelaItens(itens, q.discount_percent)}
   ${logs.length ? `<h2>Histórico de edições</h2><div class="card">${logs.map((l) => `${new Date(l.created_at).toLocaleString('pt-BR')} · ${esc(l.editor_name)} · ${brl(l.total)}`).join('<br>')}</div>` : ''}`;
   $('#pdf').onclick = () => pdfDocumento('ORÇAMENTO', q, itens).catch(falhou);
   $('#copiar').onclick = () => navigator.clipboard.writeText(link).then(() => aviso('Link copiado.'), () => prompt('Copie o link:', link));
@@ -478,10 +478,10 @@ async function telaVendas() {
 async function telaVenda(id) {
   const [v, itens] = await Promise.all([ok(sb.from('sales').select('*').eq('id', id).single()), ok(sb.from('sale_items').select('*').eq('sale_id', id).order('description'))]);
   app.innerHTML = `<h1>Venda nº ${esc(v.number)} ${statusSelo(v.status)}</h1>
+  <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
   <div class="card">${v.client_code ? `<span class="selo">cliente ${v.client_code}</span> ` : ""}<b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
   ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}</p>` : ''}</div>
-  ${tabelaItens(itens, v.discount_percent)}
-  <div class="acoes"><button class="btn azul" id="pdf">PDF da venda</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>`;
+  ${tabelaItens(itens, v.discount_percent)}`;
   $('#pdf').onclick = () => pdfDocumento('PEDIDO DE VENDA', v, itens).catch(falhou);
   if ($('#devolver')) $('#devolver').onclick = async () => {
     if (!confirm('Registrar a devolução da venda nº ' + v.number + '? O estoque volta e a venda sai do financeiro.')) return;
