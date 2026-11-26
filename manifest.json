@@ -1,0 +1,9 @@
+{
+  "name": "Sistema HIGIVARO",
+  "short_name": "HIGIVARO",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#032344",
+  "icons": [{ "src": "logo.png", "sizes": "512x512", "type": "image/png" }]
+}
