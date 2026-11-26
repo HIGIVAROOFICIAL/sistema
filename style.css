@@ -4,13 +4,19 @@
 html,body{margin:0}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.4}
 a{color:var(--azul)}
-#topo{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--navy);color:#fff;flex-wrap:wrap}
+#topo{position:sticky;top:0;z-index:5;background:#fff;box-shadow:0 2px 10px rgba(3,35,68,.08)}
+.faixa{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 16px;background:var(--navy);color:#fff}
 .marca{display:flex;align-items:center;gap:8px;color:#fff;text-decoration:none;font-weight:800;letter-spacing:.5px}
-.marca img{width:32px;height:32px;object-fit:contain;background:#fff;border-radius:8px;padding:2px}
+.marca img{width:42px;height:28px;object-fit:cover;border-radius:6px}
 .marca b{color:var(--green)}
-#menu{display:flex;gap:4px;flex:1;overflow-x:auto}
-#menu a{color:#cfe0f5;text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;font-size:14px}
-#menu a.ativo,#menu a:hover{background:rgba(255,255,255,.12);color:#fff}
+#quem{font-size:13px;color:#b9cde4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#menu{display:flex;gap:10px;padding:10px 16px;overflow-x:auto;border-bottom:1px solid var(--line);scrollbar-width:thin}
+#menu a,#menu .sair{flex:0 0 auto;width:92px;height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border:1.5px solid #c9d5e3;border-radius:12px;background:#fff;color:#3b4f68;text-decoration:none;font:inherit;font-size:12.5px;cursor:pointer;transition:.15s}
+#menu svg{width:30px;height:30px}
+#menu a:hover{border-color:var(--azul);color:var(--azul);background:#f3f8fe}
+#menu a.ativo{border-color:var(--azul);background:#e8f2fd;color:var(--azul);font-weight:600}
+#menu .sair{margin-left:auto;border-color:#f0b4b4;color:var(--red)}
+#menu .sair:hover{background:#fdf0f0;border-color:var(--red)}
 .btn-link{background:none;border:0;color:#cfe0f5;cursor:pointer;font-size:14px}
 main{max-width:1100px;margin:0 auto;padding:16px}
 h1{font-size:22px;margin:4px 0 14px}
@@ -63,4 +69,4 @@ tr.clica:hover td{background:#f7fafd}
 .meta i{display:block;height:100%;background:var(--green)}
 #aviso{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 18px;border-radius:12px;z-index:20;max-width:90vw;box-shadow:0 8px 24px rgba(0,0,0,.2)}
 #aviso.erro{background:var(--red)}
-@media (max-width:640px){main{padding:12px}#topo{padding:8px 12px}.marca span{display:none}th,td{padding:8px 6px;font-size:13px}.esconde-cel{display:none}}
+@media (max-width:640px){main{padding:12px}.faixa{padding:6px 12px}#menu{gap:8px;padding:8px 12px}#menu a,#menu .sair{width:74px;height:64px;font-size:11px}#menu svg{width:24px;height:24px}#menu .sair{margin-left:0}th,td{padding:8px 6px;font-size:13px}.esconde-cel{display:none}}

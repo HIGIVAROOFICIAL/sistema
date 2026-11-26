@@ -52,13 +52,27 @@ async function rotear() {
 }
 window.addEventListener('hashchange', rotear);
 
+// Barra de botões grandes com ícone (estilo sistema de balcão): um clique para cada área.
+const ICONES = {
+  inicio: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
+  novo: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>',
+  orcamentos: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  vendas: '<path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/>',
+  produtos: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
+  financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
+};
+const icone = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONES[n]}</svg>`;
 function montarMenu(h) {
   $('#topo').hidden = false;
-  const itens = [['#/', 'Início'], ['#/orcamento/novo', 'Novo orçamento'], ['#/orcamentos', 'Orçamentos'], ['#/vendas', 'Vendas'], ['#/produtos', 'Produtos'], ['#/financeiro', 'Financeiro']];
-  if (ehAdmin()) itens.push(['#/admin', 'Admin']);
-  $('#menu').innerHTML = itens.map(([href, t]) => `<a href="${href}" class="${h === href ? 'ativo' : ''}">${t}</a>`).join('');
+  $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
+  const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
+  if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
+  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/'));
+  $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
+  $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
 }
-$('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = null; location.hash = '#/'; rotear(); };
 
 // ---------- login ----------
 async function garantirAcesso() {
@@ -70,7 +84,8 @@ async function garantirAcesso() {
   }
   if (!S.perfil || !S.perfil.active || S.perfil.access_status !== 'liberado') {
     $('#topo').hidden = false; $('#menu').innerHTML = '';
-    app.innerHTML = `<div class="card auth"><h1>Aguardando liberação</h1><p>Seu cadastro (${esc(S.user.email)}) foi recebido. O administrador da HIGIVARO precisa liberar o seu acesso.</p><button class="btn" onclick="location.reload()">Já fui liberado</button></div>`;
+    app.innerHTML = `<div class="card auth"><h1>Aguardando liberação</h1><p>Seu cadastro (${esc(S.user.email)}) foi recebido. O administrador da HIGIVARO precisa liberar o seu acesso.</p><div class="acoes"><button class="btn" onclick="location.reload()">Já fui liberado</button><button class="btn perigo" id="sairEspera">Sair</button></div></div>`;
+    $('#sairEspera').onclick = async () => { await sb.auth.signOut(); location.reload(); };
     return false;
   }
   if (S.perfil.must_change_password) { telaTrocarSenha(true); return false; }
