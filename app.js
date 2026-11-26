@@ -29,7 +29,8 @@ const ROTAS = [
   [/^#\/?$/, telaInicio],
   [/^#\/produtos$/, telaProdutos],
   [/^#\/orcamento\/novo(?:\?cliente=(\d+))?$/, (cod) => telaEditorOrcamento(null, cod)],
-  [/^#\/clientes$/, telaClientes],
+  [/^#\/clientes$/, () => telaClientes('menu')],
+  [/^#\/clientes\/(novo|lista)$/, (modo) => telaClientes(modo)],
   [/^#\/orcamento\/([\w-]+)\/editar$/, (id) => telaEditorOrcamento(id)],
   [/^#\/orcamento\/([\w-]+)$/, telaOrcamento],
   [/^#\/orcamentos$/, telaOrcamentos],
@@ -62,6 +63,7 @@ const ICONES = {
   vendas: '<path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/>',
   produtos: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
   clientes: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 6 5"/>',
+  novoCliente: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
@@ -72,7 +74,7 @@ function montarMenu(h) {
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
   const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
   if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
-  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro'));
+  const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
   $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
 }
@@ -263,20 +265,28 @@ async function salvarCliente(id, dados) {
   if (id) return ok(sb.from('clients').update(dados).eq('id', id).select('id,code').single());
   return ok(sb.from('clients').insert(dados).select('id,code').single());
 }
-async function telaClientes() {
-  app.innerHTML = `<h1>Clientes</h1><div class="linha"><input id="busca" placeholder="Buscar por nome, código, CPF/CNPJ, telefone ou e-mail"></div>
-  <div class="acoes"><button class="btn azul" id="novo">＋ Novo cliente</button></div><div id="form"></div>
-  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Cód.</th><th>Nome / Razão social</th><th class="esconde-cel">CPF / CNPJ</th><th>Telefone</th><th class="esconde-cel">E-mail</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+// Clientes: abre só com dois botões grandes; o formulário ou a lista aparecem depois do clique.
+async function telaClientes(modo) {
+  const { count } = await sb.from('clients').select('id', { count: 'exact', head: true });
+  app.innerHTML = `<h1>Clientes</h1>
+  <div class="atalhos">
+    <a href="#/clientes/novo" class="${modo === 'novo' ? 'ativo' : ''}">${icone('novoCliente')}<span>Cadastrar novo cliente</span></a>
+    <a href="#/clientes/lista" class="${modo === 'lista' ? 'ativo' : ''}">${icone('clientes')}<span>Clientes cadastrados${count != null ? ` <b>(${count})</b>` : ''}</span></a>
+  </div>
+  <div id="form"></div>
+  ${modo === 'lista' ? `<div class="linha"><input id="busca" placeholder="Buscar por nome, código, CPF/CNPJ, telefone ou e-mail"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Cód.</th><th>Nome / Razão social</th><th class="esconde-cel">CPF / CNPJ</th><th>Telefone</th><th class="esconde-cel">E-mail</th></tr></thead><tbody id="lista"></tbody></table></div>` : ''}`;
+  if (modo === 'novo') { formCliente(null, () => (location.hash = '#/clientes/lista'), () => (location.hash = '#/clientes')); setTimeout(() => $('#cdoc') && $('#cdoc').focus(), 50); return; }
+  if (modo !== 'lista') return;
   const carregar = async () => {
     const cs = await buscarClientes($('#busca').value, 300);
     $('#lista').innerHTML = cs.map((c) => `<tr class="clica" data-id="${c.id}"><td><b>${c.code}</b></td><td>${esc(c.name)}</td><td class="esconde-cel">${esc(c.doc || '')}</td><td>${esc(c.phone || '')}</td><td class="esconde-cel">${esc(c.email || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="vazio">Nenhum cliente.</td></tr>';
     $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formCliente(cs.find((c) => c.id === tr.dataset.id), carregar)));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
-  $('#novo').onclick = () => formCliente(null, carregar);
-  carregar();
+  carregar(); $('#busca').focus();
 }
-function formCliente(c, depois) {
+function formCliente(c, depois, aoCancelar) {
   c = c || {};
   $('#form').innerHTML = `<div class="card"><h2 style="margin-top:0">${c.id ? 'Cliente ' + c.code : 'Novo cliente'} <small style="color:var(--muted);font-weight:400">${c.id ? '' : '(o código é gerado ao salvar)'}</small></h2><form id="fc">
     <div class="linha"><div><label>CPF ou CNPJ <small id="docst"></small></label><input name="doc" id="cdoc" value="${esc(c.doc)}" inputmode="numeric"></div><div style="flex:2 1 260px"><label>Nome / Razão social</label><input name="name" id="cnome" required value="${esc(c.name)}"></div></div>
@@ -285,7 +295,7 @@ function formCliente(c, depois) {
     <label>Observações</label><textarea name="notes">${esc(c.notes)}</textarea>
     <div class="acoes"><button class="btn pri">Salvar</button>${c.id ? `<a class="btn" href="#/orcamento/novo?cliente=${c.code}">Novo orçamento para este cliente</a>` : ''}<button type="button" class="btn" id="cancela">Cancelar</button>${c.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
   $('#form').scrollIntoView({ behavior: 'smooth' });
-  $('#cancela').onclick = () => ($('#form').innerHTML = '');
+  $('#cancela').onclick = () => (aoCancelar ? aoCancelar() : ($('#form').innerHTML = ''));
   $('#cdoc').oninput = async () => {
     const d = soDig($('#cdoc').value); if (d.length !== 11 && d.length !== 14) return;
     $('#cdoc').value = formatarDoc(d);
