@@ -28,7 +28,8 @@ const ROTAS = [
   [/^#\/o\/([\w-]+)$/, telaOrcamentoPublico, true],
   [/^#\/?$/, telaInicio],
   [/^#\/produtos$/, telaProdutos],
-  [/^#\/orcamento\/novo$/, () => telaEditorOrcamento(null)],
+  [/^#\/orcamento\/novo(?:\?cliente=(\d+))?$/, (cod) => telaEditorOrcamento(null, cod)],
+  [/^#\/clientes$/, telaClientes],
   [/^#\/orcamento\/([\w-]+)\/editar$/, (id) => telaEditorOrcamento(id)],
   [/^#\/orcamento\/([\w-]+)$/, telaOrcamento],
   [/^#\/orcamentos$/, telaOrcamentos],
@@ -59,6 +60,7 @@ const ICONES = {
   orcamentos: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   vendas: '<path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/>',
   produtos: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/>',
+  clientes: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 6 5"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
@@ -67,7 +69,7 @@ const icone = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 function montarMenu(h) {
   $('#topo').hidden = false;
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
-  const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
+  const itens = [['#/', 'Início', 'inicio'], ['#/orcamento/novo', 'Novo orçamento', 'novo'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
   if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
   const ativo = (href) => h === href || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
@@ -221,8 +223,82 @@ async function importarCsv(arq, depois) {
   } catch (e) { falhou(e); }
 }
 
+// ---------- clientes ----------
+const formatarDoc = (c) => (c.length === 11 ? c.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4') : c.length === 14 ? c.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : c);
+async function buscarClientes(t, limite = 50) {
+  let q = sb.from('clients').select('*').order('name').limit(limite);
+  t = limpaBusca(t);
+  if (t) {
+    const f = [`name.ilike.%${t}%`, `email.ilike.%${t}%`, `phone.ilike.%${t}%`, `doc.ilike.%${t}%`];
+    const d = soDig(t);
+    if (d && d.length <= 6) f.push(`code.eq.${Number(d)}`);
+    if (d.length >= 3) f.push(`doc.ilike.%${formatarDoc(d)}%`);
+    q = q.or(f.join(','));
+  }
+  return ok(q);
+}
+async function clientePorDoc(dig) {
+  if (!dig) return null;
+  const cs = await ok(sb.from('clients').select('*').or(`doc.eq.${dig},doc.eq.${formatarDoc(dig)}`).limit(1));
+  return cs[0] || null;
+}
+// Dados públicos do CNPJ: BrasilAPI (nome e situação) + CNPJ.ws (e-mail e telefone, que a BrasilAPI quase nunca traz).
+async function buscarCnpj(c) {
+  try {
+    const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) return null;
+    const d = await r.json();
+    let email = d.email, fone = d.ddd_telefone_1;
+    if (!email || !fone) {
+      try { const e = (await (await fetch('https://publica.cnpj.ws/cnpj/' + c)).json()).estabelecimento || {}; email = email || e.email; fone = fone || (e.telefone1 ? (e.ddd1 || '') + e.telefone1 : ''); } catch { /* segue */ }
+    }
+    return { nome: d.razao_social || d.nome_fantasia || '', email: email ? String(email).toLowerCase() : '', fone: fone ? String(fone).replace(/\D/g, '').replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3') : '', situacao: (d.descricao_situacao_cadastral || 'encontrado').toLowerCase(), endereco: [d.logradouro, d.numero, d.bairro, d.municipio && d.municipio + '-' + d.uf].filter(Boolean).join(', ') };
+  } catch { return null; }
+}
+// Cria o cliente (o banco gera o código) ou atualiza o cadastro existente. Se o CPF/CNPJ já existir, reaproveita.
+async function salvarCliente(id, dados) {
+  if (!id && dados.doc) { const ja = await clientePorDoc(soDig(dados.doc)); if (ja) id = ja.id; }
+  if (id) return ok(sb.from('clients').update(dados).eq('id', id).select('id,code').single());
+  return ok(sb.from('clients').insert(dados).select('id,code').single());
+}
+async function telaClientes() {
+  app.innerHTML = `<h1>Clientes</h1><div class="linha"><input id="busca" placeholder="Buscar por nome, código, CPF/CNPJ, telefone ou e-mail"></div>
+  <div class="acoes"><button class="btn azul" id="novo">＋ Novo cliente</button></div><div id="form"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Cód.</th><th>Nome / Razão social</th><th class="esconde-cel">CPF / CNPJ</th><th>Telefone</th><th class="esconde-cel">E-mail</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  const carregar = async () => {
+    const cs = await buscarClientes($('#busca').value, 300);
+    $('#lista').innerHTML = cs.map((c) => `<tr class="clica" data-id="${c.id}"><td><b>${c.code}</b></td><td>${esc(c.name)}</td><td class="esconde-cel">${esc(c.doc || '')}</td><td>${esc(c.phone || '')}</td><td class="esconde-cel">${esc(c.email || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="vazio">Nenhum cliente.</td></tr>';
+    $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formCliente(cs.find((c) => c.id === tr.dataset.id), carregar)));
+  };
+  let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
+  $('#novo').onclick = () => formCliente(null, carregar);
+  carregar();
+}
+function formCliente(c, depois) {
+  c = c || {};
+  $('#form').innerHTML = `<div class="card"><h2 style="margin-top:0">${c.id ? 'Cliente ' + c.code : 'Novo cliente'} <small style="color:var(--muted);font-weight:400">${c.id ? '' : '(o código é gerado ao salvar)'}</small></h2><form id="fc">
+    <div class="linha"><div><label>CPF ou CNPJ <small id="docst"></small></label><input name="doc" id="cdoc" value="${esc(c.doc)}" inputmode="numeric"></div><div style="flex:2 1 260px"><label>Nome / Razão social</label><input name="name" id="cnome" required value="${esc(c.name)}"></div></div>
+    <div class="linha"><div><label>Telefone / WhatsApp</label><input name="phone" id="cfone" value="${esc(c.phone)}" inputmode="tel"></div><div><label>E-mail</label><input name="email" id="cemail" type="email" value="${esc(c.email)}"></div></div>
+    <label>Endereço</label><input name="address" id="cend" value="${esc(c.address)}">
+    <label>Observações</label><textarea name="notes">${esc(c.notes)}</textarea>
+    <div class="acoes"><button class="btn pri">Salvar</button>${c.id ? `<a class="btn" href="#/orcamento/novo?cliente=${c.code}">Novo orçamento para este cliente</a>` : ''}<button type="button" class="btn" id="cancela">Cancelar</button>${c.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
+  $('#form').scrollIntoView({ behavior: 'smooth' });
+  $('#cancela').onclick = () => ($('#form').innerHTML = '');
+  $('#cdoc').oninput = async () => {
+    const d = soDig($('#cdoc').value); if (d.length !== 11 && d.length !== 14) return;
+    $('#cdoc').value = formatarDoc(d);
+    const ja = await clientePorDoc(d); if (ja && ja.id !== c.id) { $('#docst').textContent = '· já cadastrado: código ' + ja.code; return; }
+    if (d.length === 14 && !c.id) { $('#docst').textContent = '· buscando…'; const r = await buscarCnpj(d); if (!r) { $('#docst').textContent = '· não encontrado'; return; } $('#cnome').value = r.nome; if (r.fone) $('#cfone').value = r.fone; if (r.email) $('#cemail').value = r.email; if (r.endereco) $('#cend').value = r.endereco; $('#docst').textContent = '· ' + r.situacao; }
+  };
+  if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir o cliente ' + c.code + '? Os orçamentos dele continuam.')) return; try { await ok(sb.from('clients').delete().eq('id', c.id)); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
+  $('#fc').onsubmit = async (e) => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+    Object.keys(f).forEach((k) => (f[k] = f[k].trim() || null)); if (f.email) f.email = f.email.toLowerCase();
+    try { const r = await salvarCliente(c.id, f); aviso('Cliente ' + r.code + ' salvo.'); $('#form').innerHTML = ''; depois(); } catch (err) { falhou(String(err.message || err).includes('clients_doc_unico') ? 'esse CPF/CNPJ já está cadastrado' : err); }
+  };
+}
+
 // ---------- orçamento: editor ----------
-async function telaEditorOrcamento(id) {
+async function telaEditorOrcamento(id, codCliente) {
   let q = { client_name: '', client_doc: '', client_phone: '', client_email: '', observations: '', discount_percent: 0 }, itens = [];
   if (id) {
     q = await ok(sb.from('quotes').select('*').eq('id', id).single());
@@ -230,7 +306,10 @@ async function telaEditorOrcamento(id) {
     itens = await ok(sb.from('quote_items').select('*').eq('quote_id', id).order('description'));
   }
   app.innerHTML = `<h1>${id ? 'Editar orçamento nº ' + esc(q.number) : 'Novo orçamento'}</h1>
-  <div class="card"><h2 style="margin-top:0">Cliente</h2><div class="linha">
+  <div class="card"><h2 style="margin-top:0">Cliente</h2>
+    <div class="linha"><div style="flex:0 1 150px"><label>Cód. cliente <small id="codst"></small></label><input id="ccod" value="${q.client_code || ''}" inputmode="numeric" placeholder="Ex.: 101"></div>
+    <div style="flex:3 1 300px;position:relative"><label>Buscar cliente cadastrado</label><input id="bcli" placeholder="Digite nome, código, CPF/CNPJ ou telefone"><div id="sugcli"></div></div></div>
+    <div class="linha">
     <div><label>CPF ou CNPJ <small id="docst"></small></label><input id="doc" value="${esc(q.client_doc)}" inputmode="numeric" placeholder="Só números"></div>
     <div style="flex:2 1 260px"><label>Nome / Razão social</label><input id="nome" value="${esc(q.client_name)}"></div></div>
     <div class="linha"><div><label>Telefone / WhatsApp</label><input id="fone" value="${esc(q.client_phone)}" inputmode="tel"></div><div><label>E-mail</label><input id="email" value="${esc(q.client_email)}" type="email"></div></div>
@@ -266,32 +345,49 @@ async function telaEditorOrcamento(id) {
       }));
     }, 250);
   };
-  // CNPJ: ao completar 14 números, busca sozinho os dados na Receita (BrasilAPI) e formata. CPF: só formata.
+  // Cliente: pelo código, pela busca (nome, código, CPF/CNPJ, telefone) ou pelo CNPJ (cadastro ou Receita).
+  let clienteId = q.client_id || null;
+  const preencher = (c) => {
+    clienteId = c.id; $('#ccod').value = c.code; $('#nome').value = c.name || ''; $('#doc').value = c.doc || '';
+    $('#fone').value = c.phone || ''; $('#email').value = c.email || ''; $('#codst').textContent = '· ok'; $('#bcli').value = ''; $('#sugcli').innerHTML = '';
+  };
+  let tc;
+  $('#ccod').oninput = () => {
+    clearTimeout(tc); const cod = soDig($('#ccod').value); $('#codst').textContent = '';
+    if (!cod) { clienteId = null; return; }
+    tc = setTimeout(async () => {
+      const c = await ok(sb.from('clients').select('*').eq('code', Number(cod)).maybeSingle());
+      if (c) preencher(c); else { clienteId = null; $('#codst').textContent = '· não encontrado'; }
+    }, 350);
+  };
+  let tb;
+  $('#bcli').oninput = () => {
+    clearTimeout(tb);
+    tb = setTimeout(async () => {
+      const cs = await buscarClientes($('#bcli').value, 10);
+      if (!$('#bcli').value.trim()) return ($('#sugcli').innerHTML = '');
+      $('#sugcli').innerHTML = cs.length ? `<div class="sugestoes">${cs.map((c) => `<div data-id="${c.id}"><b>${c.code} · ${esc(c.name)}</b><br><small>${esc(c.doc || 'sem CPF/CNPJ')} · ${esc(c.phone || '')}</small></div>`).join('')}</div>` : '<p class="vazio" style="padding:8px">Nenhum cliente encontrado. Preencha os dados abaixo que ele é cadastrado ao salvar.</p>';
+      $$('#sugcli [data-id]').forEach((d) => (d.onclick = () => preencher(cs.find((x) => x.id === d.dataset.id))));
+    }, 250);
+  };
+  // CNPJ/CPF: se já for cliente, puxa o cadastro; se for CNPJ novo, busca na Receita.
   let ultimoDoc = soDig(q.client_doc);
   $('#doc').oninput = async () => {
     const c = soDig($('#doc').value), st = $('#docst');
-    if (c.length === 11) { $('#doc').value = c.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'); st.textContent = '· CPF'; return; }
-    if (c.length !== 14) { st.textContent = ''; return; }
-    $('#doc').value = c.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    if (c.length !== 11 && c.length !== 14) { st.textContent = ''; return; }
+    $('#doc').value = formatarDoc(c);
     if (c === ultimoDoc) return; ultimoDoc = c;
+    const ja = await clientePorDoc(c);
+    if (ja) { preencher(ja); st.textContent = '· cliente já cadastrado'; return; }
+    clienteId = null; $('#ccod').value = '';
+    if (c.length === 11) { st.textContent = '· CPF'; return; }
     st.textContent = '· buscando…';
-    try {
-      const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) throw new Error('não encontrado');
-      const d = await r.json();
-      $('#nome').value = d.razao_social || d.nome_fantasia || '';
-      let email = d.email, fone = d.ddd_telefone_1;
-      // A BrasilAPI quase nunca traz o e-mail; a CNPJ.ws (pública) traz e-mail e telefone.
-      if (!email || !fone) {
-        try {
-          const e = (await (await fetch('https://publica.cnpj.ws/cnpj/' + c)).json()).estabelecimento || {};
-          email = email || e.email; fone = fone || (e.telefone1 ? (e.ddd1 || '') + e.telefone1 : '');
-        } catch { /* segue só com a BrasilAPI */ }
-      }
-      if (email) $('#email').value = String(email).toLowerCase();
-      if (fone) $('#fone').value = String(fone).replace(/\D/g, '').replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3');
-      st.textContent = '· ' + (d.descricao_situacao_cadastral || 'encontrado').toLowerCase();
-    } catch (e) { st.textContent = '· CNPJ não encontrado'; }
+    const d = await buscarCnpj(c);
+    if (!d) { st.textContent = '· CNPJ não encontrado'; return; }
+    $('#nome').value = d.nome; if (d.email) $('#email').value = d.email; if (d.fone) $('#fone').value = d.fone;
+    st.textContent = '· ' + d.situacao;
   };
+  if (codCliente) { const c = await ok(sb.from('clients').select('*').eq('code', Number(codCliente)).maybeSingle()); if (c) preencher(c); }
   $('#salvar').onclick = async () => {
     if (!$('#nome').value.trim()) return aviso('Informe o nome do cliente.', true);
     if (!itens.length) return aviso('Adicione pelo menos um produto.', true);
@@ -299,6 +395,9 @@ async function telaEditorOrcamento(id) {
     const pct = num($('#desc').value), bruto = itens.reduce((s, i) => s + i.quantity * i.unit_price, 0);
     const reg = { client_name: $('#nome').value.trim(), client_doc: $('#doc').value.trim(), client_phone: $('#fone').value.trim(), client_email: $('#email').value.trim(), observations: $('#obs').value.trim(), discount_percent: pct, total: r2(bruto * (1 - pct / 100)), items_count: itens.length, status: 'finalizado' };
     try {
+      // Garante o cadastro do cliente (cria com código novo ou atualiza os dados) antes de gravar o orçamento.
+      const cli = await salvarCliente(clienteId, { name: reg.client_name, doc: reg.client_doc || null, phone: reg.client_phone || null, email: reg.client_email || null });
+      reg.client_id = cli.id; reg.client_code = cli.code;
       let qid = id;
       if (id) { await ok(sb.from('quotes').update(reg).eq('id', id)); await ok(sb.from('quote_items').delete().eq('quote_id', id)); }
       else { const n = await ok(sb.from('quotes').insert({ ...reg, employee_name: S.perfil.full_name, employee_id: S.perfil.id }).select('id').single()); qid = n.id; }
@@ -320,7 +419,7 @@ async function telaOrcamento(id) {
   const venda = q.status === 'vendido' ? await ok(sb.from('sales').select('id,number').eq('quote_id', id).eq('status', 'confirmada').maybeSingle()) : null;
   const link = location.origin + location.pathname + '#/o/' + id;
   app.innerHTML = `<h1>Orçamento nº ${esc(q.number)} ${statusSelo(q.status)}</h1>
-  <div class="card"><b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small>${q.observations ? `<p>${esc(q.observations)}</p>` : ''}</div>
+  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small>${q.observations ? `<p>${esc(q.observations)}</p>` : ''}</div>
   ${tabelaItens(itens, q.discount_percent)}
   <div class="acoes">
     <button class="btn azul" id="pdf">PDF do orçamento</button>
@@ -354,10 +453,10 @@ async function telaOrcamentos() {
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="esconde-cel">Data</th><th class="esconde-cel">Vendedor</th><th class="num">Total</th><th>Status</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
     let qy = sb.from('quotes').select('*').order('created_at', { ascending: false }).limit(200);
-    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%`);
+    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^d{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
     if ($('#st').value) qy = qy.eq('status', $('#st').value);
     const qs = await ok(qy);
-    $('#lista').innerHTML = qs.map((q) => `<tr class="clica" onclick="location.hash='#/orcamento/${q.id}'"><td>${esc(q.number)}</td><td>${esc(q.client_name)}</td><td class="esconde-cel">${dataBR(q.date)}</td><td class="esconde-cel">${esc(q.employee_name || '')}</td><td class="num">${brl(q.total)}</td><td>${statusSelo(q.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum orçamento.</td></tr>';
+    $('#lista').innerHTML = qs.map((q) => `<tr class="clica" onclick="location.hash='#/orcamento/${q.id}'"><td>${esc(q.number)}</td><td>${q.client_code ? `<small style="color:var(--muted)">${q.client_code}</small> ` : ""}${esc(q.client_name)}</td><td class="esconde-cel">${dataBR(q.date)}</td><td class="esconde-cel">${esc(q.employee_name || '')}</td><td class="num">${brl(q.total)}</td><td>${statusSelo(q.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum orçamento.</td></tr>';
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); }; $('#st').onchange = carregar; carregar();
 }
@@ -369,9 +468,9 @@ async function telaVendas() {
   const carregar = async () => {
     const m = $('#mes').value; let qy = sb.from('sales').select('*').order('created_at', { ascending: false }).limit(500);
     if (m) { const [y, mm] = m.split('-').map(Number); qy = qy.gte('date', m + '-01').lte('date', m + '-' + new Date(y, mm, 0).getDate()); }
-    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%`);
+    const t = limpaBusca($('#busca').value); if (t) qy = qy.or(`client_name.ilike.%${t}%,number.ilike.%${t}%` + (/^d{1,4}$/.test(t) ? `,client_code.eq.${t}` : ""));
     const vs = await ok(qy);
-    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${esc(v.number)}</td><td>${esc(v.client_name)}</td><td class="esconde-cel">${dataBR(v.date)}</td><td class="esconde-cel">${esc(v.employee_name || '')}</td><td class="num">${brl(v.total)}</td><td>${statusSelo(v.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma venda.</td></tr>';
+    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${esc(v.number)}</td><td>${v.client_code ? `<small style="color:var(--muted)">${v.client_code}</small> ` : ""}${esc(v.client_name)}</td><td class="esconde-cel">${dataBR(v.date)}</td><td class="esconde-cel">${esc(v.employee_name || '')}</td><td class="num">${brl(v.total)}</td><td>${statusSelo(v.status)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma venda.</td></tr>';
     $('#soma').textContent = 'Total confirmado: ' + brl(vs.filter((v) => v.status === 'confirmada').reduce((s, v) => s + Number(v.total), 0));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; carregar();
@@ -379,7 +478,7 @@ async function telaVendas() {
 async function telaVenda(id) {
   const [v, itens] = await Promise.all([ok(sb.from('sales').select('*').eq('id', id).single()), ok(sb.from('sale_items').select('*').eq('sale_id', id).order('description'))]);
   app.innerHTML = `<h1>Venda nº ${esc(v.number)} ${statusSelo(v.status)}</h1>
-  <div class="card"><b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
+  <div class="card">${v.client_code ? `<span class="selo">cliente ${v.client_code}</span> ` : ""}<b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
   ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}</p>` : ''}</div>
   ${tabelaItens(itens, v.discount_percent)}
   <div class="acoes"><button class="btn azul" id="pdf">PDF da venda</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>`;
@@ -501,7 +600,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   // Quadro do cliente
   let y = 48;
   cor('setFillColor', FUNDO); cor('setDrawColor', LINHA); pdf.setLineWidth(0.3); pdf.roundedRect(M, y, L, 31, 2.5, 2.5, 'FD');
-  rotulo('Cliente', M + 5, y + 6);
+  rotulo(doc.client_code ? 'Cliente  •  código ' + doc.client_code : 'Cliente', M + 5, y + 6);
   txt(doc.client_name || '—', M + 5, y + 11.5, { s: 11.5, b: true });
   const col = [M + 5, M + 62, M + 118];
   rotulo('CPF / CNPJ', col[0], y + 18); txt(doc.client_doc || '—', col[0], y + 22.5, { s: 9 });
