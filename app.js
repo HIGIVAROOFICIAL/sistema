@@ -463,7 +463,7 @@ async function confirmarVenda(q, itens) {
     <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" id="dPago" style="width:auto"> Já foi recebido (pago agora)</label>
     <div id="dVencBox"><label>Vencimento (fica em "a receber" até ser pago)</label><input type="date" id="dVenc" value="${venc30}"></div>`,
     'Confirmar venda', () => ({ forma: $('#dForma').value, pago: $('#dPago').checked, venc: $('#dVenc').value }),
-    () => { const sinc = () => { const avista = ['Pix', 'Dinheiro', 'Cartão de débito'].includes($('#dForma').value); if (avista) $('#dPago').checked = true; $('#dVencBox').hidden = $('#dPago').checked; }; $('#dForma').onchange = sinc; $('#dPago').onchange = () => ($('#dVencBox').hidden = $('#dPago').checked); sinc(); });
+    () => { const sinc = () => { const avista = ['Pix', 'Dinheiro', 'Cartão de débito'].includes($('#dForma').value); $('#dPago').checked = avista; $('#dVencBox').hidden = $('#dPago').checked; }; $('#dForma').onchange = sinc; $('#dPago').onchange = () => ($('#dVencBox').hidden = $('#dPago').checked); sinc(); });
   if (!r) return;
   try { const vid = await ok(sb.rpc('registrar_venda', { p_quote: q.id, p_forma: r.forma, p_pago: r.pago, p_vencimento: r.pago ? hoje() : r.venc || hoje() })); aviso('Venda registrada.'); location.hash = '#/venda/' + vid; } catch (e) { falhou(e); }
 }
