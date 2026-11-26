@@ -216,7 +216,7 @@ async function telaEditorOrcamento(id) {
   }
   app.innerHTML = `<h1>${id ? 'Editar orçamento nº ' + esc(q.number) : 'Novo orçamento'}</h1>
   <div class="card"><h2 style="margin-top:0">Cliente</h2><div class="linha">
-    <div><label>CPF ou CNPJ</label><div class="linha" style="gap:6px"><input id="doc" value="${esc(q.client_doc)}" inputmode="numeric"><button class="btn" id="bcnpj" style="flex:0 0 auto">Buscar CNPJ</button></div></div>
+    <div><label>CPF ou CNPJ <small id="docst"></small></label><input id="doc" value="${esc(q.client_doc)}" inputmode="numeric" placeholder="Só números"></div>
     <div style="flex:2 1 260px"><label>Nome / Razão social</label><input id="nome" value="${esc(q.client_name)}"></div></div>
     <div class="linha"><div><label>Telefone / WhatsApp</label><input id="fone" value="${esc(q.client_phone)}" inputmode="tel"></div><div><label>E-mail</label><input id="email" value="${esc(q.client_email)}" type="email"></div></div>
     <label>Observações</label><textarea id="obs">${esc(q.observations)}</textarea></div>
@@ -251,14 +251,23 @@ async function telaEditorOrcamento(id) {
       }));
     }, 250);
   };
-  $('#bcnpj').onclick = async () => {
-    const c = soDig($('#doc').value); if (c.length !== 14) return aviso('Digite um CNPJ com 14 números.', true);
+  // CNPJ: ao completar 14 números, busca sozinho os dados na Receita (BrasilAPI) e formata. CPF: só formata.
+  let ultimoDoc = soDig(q.client_doc);
+  $('#doc').oninput = async () => {
+    const c = soDig($('#doc').value), st = $('#docst');
+    if (c.length === 11) { $('#doc').value = c.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'); st.textContent = '· CPF'; return; }
+    if (c.length !== 14) { st.textContent = ''; return; }
+    $('#doc').value = c.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    if (c === ultimoDoc) return; ultimoDoc = c;
+    st.textContent = '· buscando…';
     try {
-      const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) throw new Error('CNPJ não encontrado');
+      const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) throw new Error('não encontrado');
       const d = await r.json();
-      $('#nome').value = d.razao_social || d.nome_fantasia || ''; if (d.ddd_telefone_1 && !$('#fone').value) $('#fone').value = d.ddd_telefone_1; if (d.email && !$('#email').value) $('#email').value = String(d.email).toLowerCase();
-      aviso('Dados do CNPJ preenchidos.');
-    } catch (e) { falhou(e); }
+      $('#nome').value = d.razao_social || d.nome_fantasia || '';
+      if (d.ddd_telefone_1 && !$('#fone').value) $('#fone').value = d.ddd_telefone_1;
+      if (d.email && !$('#email').value) $('#email').value = String(d.email).toLowerCase();
+      st.textContent = '· ' + (d.descricao_situacao_cadastral || 'encontrado').toLowerCase();
+    } catch (e) { st.textContent = '· CNPJ não encontrado'; }
   };
   $('#salvar').onclick = async () => {
     if (!$('#nome').value.trim()) return aviso('Informe o nome do cliente.', true);
