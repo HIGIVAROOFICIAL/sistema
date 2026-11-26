@@ -441,7 +441,7 @@ async function telaOrcamentoPublico(id) {
 }
 
 // ---------- PDF ----------
-let logoData;
+let logoData, logoCor = [2, 32, 66];
 async function carregarLogo() {
   if (logoData !== undefined) return logoData;
   // Reduz a logo para JPEG de 360 px: o PDF fica leve (bom para mandar no WhatsApp).
@@ -450,6 +450,9 @@ async function carregarLogo() {
     // A logo é retangular (3:2): mantém a proporção e boa resolução.
     const cv = document.createElement('canvas'); cv.width = 900; cv.height = 600; const g = cv.getContext('2d');
     g.drawImage(img, 0, 0, 900, 600);
+    // Cor do fundo da logo (média das bordas) para o cabeçalho emendar sem "caixa" visível.
+    const px = [[4, 300], [895, 300], [450, 4], [450, 595]].map(([x, y]) => g.getImageData(x, y, 1, 1).data);
+    logoCor = [0, 1, 2].map((k) => Math.round(px.reduce((s, p) => s + p[k], 0) / px.length));
     logoData = cv.toDataURL('image/jpeg', 0.92);
   } catch { logoData = null; }
   return logoData;
@@ -467,7 +470,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   const rotulo = (t, x, y) => txt(String(t).toUpperCase(), x, y, { s: 6.5, b: true, c: CINZA });
 
   // Cabeçalho
-  cor('setFillColor', [2, 32, 66]); pdf.rect(0, 0, 210, 40, 'F');
+  cor('setFillColor', logoCor); pdf.rect(0, 0, 210, 40, 'F');
   cor('setFillColor', VERDE); pdf.rect(0, 40, 210, 1.4, 'F');
   // Logo inteira (com nome e lema), proporção 3:2, à esquerda; contatos ao lado, separados por um fio.
   if (logo) pdf.addImage(logo, 'JPEG', 4, 1.5, 55.5, 37);
