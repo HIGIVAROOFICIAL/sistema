@@ -1903,6 +1903,26 @@ async function codigoMunicipio(nome, uf) {
     const alvo = semAcento(nome).trim(); const m = l.find((x) => semAcento(x.nome) === alvo); return m ? String(m.id) : '';
   } catch { return ''; }
 }
+// Endereço e IE pelo CNPJ: BrasilAPI (Receita) e, se falhar, cnpj.ws; IE da Bahia confirmada na SEFAZ-BA pelo programa do PC.
+async function dadosDoCnpj(doc) {
+  let dados = null, fonte = '';
+  try {
+    const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + doc);
+    if (r.ok) { const j = await r.json(); dados = { nome: j.razao_social || '', logradouro: [j.descricao_tipo_de_logradouro, j.logradouro].filter(Boolean).join(' '), numero: j.numero || 'S/N', complemento: j.complemento || '', bairro: j.bairro || '', cMun: String(j.codigo_municipio_ibge || ''), municipio: j.municipio || '', uf: j.uf || 'BA', cep: soDig(j.cep) }; fonte = 'cadastro do CNPJ na Receita'; }
+  } catch { /* tenta a reserva */ }
+  if (!dados || !dados.logradouro || dados.cMun.length !== 7) {
+    try {
+      const r = await fetch('https://publica.cnpj.ws/cnpj/' + doc);
+      if (r.ok) { const j = await r.json(), e = j.estabelecimento || {}; dados = { nome: j.razao_social || dados?.nome || '', logradouro: [e.tipo_logradouro, e.logradouro].filter(Boolean).join(' '), numero: e.numero || 'S/N', complemento: e.complemento || '', bairro: e.bairro || '', cMun: String(e.cidade?.ibge_id || ''), municipio: e.cidade?.nome || '', uf: e.estado?.sigla || 'BA', cep: soDig(e.cep) };
+        const ie = (e.inscricoes_estaduais || []).find((i) => i.ativo && i.estado?.sigla === dados.uf); if (ie) Object.assign(dados, { ie: soDig(ie.inscricao_estadual), ind: '1', final: false }); fonte = 'cadastro do CNPJ (Receita)'; }
+    } catch { /* sem dados */ }
+  }
+  if (!dados) return null;
+  if (dados.uf === 'BA') {
+    try { const c = await assinadorNFe('/cadastro', { cnpj: doc, uf: 'BA' }); const cad = (c.cadastros || []).find((x) => x.situacao === '1'); if (cad?.IE) { Object.assign(dados, { ie: cad.IE, ind: '1', final: false }); fonte += ' + IE na SEFAZ-BA'; } } catch { /* sem IE */ }
+  }
+  return { dados, fonte };
+}
 // Destinatário: última NF-e do cliente > cadastro do CNPJ (Receita + SEFAZ-BA) > preenchimento manual. Sempre conferido numa janela.
 async function dadosDestinatario(v) {
   const doc = soDig(v.client_doc);
@@ -1918,15 +1938,7 @@ async function dadosDestinatario(v) {
       }
     } catch { /* segue */ }
   }
-  if (!fonte && doc.length === 14) {
-    try {
-      const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + doc);
-      if (r.ok) { const j = await r.json(); Object.assign(d, { nome: j.razao_social || d.nome, logradouro: [j.descricao_tipo_de_logradouro, j.logradouro].filter(Boolean).join(' '), numero: j.numero || 'S/N', complemento: j.complemento || '', bairro: j.bairro || '', cMun: String(j.codigo_municipio_ibge || ''), municipio: j.municipio || '', uf: j.uf || 'BA', cep: soDig(j.cep) }); fonte = 'cadastro do CNPJ na Receita'; }
-    } catch { /* segue */ }
-    if (d.uf === 'BA') {
-      try { const c = await assinadorNFe('/cadastro', { cnpj: doc, uf: 'BA' }); const cad = (c.cadastros || []).find((x) => x.situacao === '1'); if (cad?.IE) { d.ie = cad.IE; d.ind = '1'; d.final = false; fonte += ' + IE na SEFAZ-BA'; } } catch { /* sem IE */ }
-    }
-  }
+  if (!fonte && doc.length === 14) { const c = await dadosDoCnpj(doc); if (c) { Object.assign(d, c.dados); fonte = c.fonte; } }
   const campo = (k, r, w = 1, extra = '') => `<div style="flex:${w} 1 ${w * 100}px"><label>${r}</label><input id="dd_${k}" value="${esc(d[k] ?? '')}" ${extra}></div>`;
   return dialogo(`<h2 style="margin-top:0">Destinatário da NF-e</h2><p style="color:var(--muted);margin-top:0">${fonte ? 'Dados preenchidos pelo ' + esc(fonte) + '. ' : ''}Confira antes de emitir.</p>
     <div class="linha">${campo('doc', 'CPF ou CNPJ *', 1, 'inputmode="numeric"')}${campo('nome', 'Nome / Razão social *', 3)}</div>
@@ -1953,6 +1965,18 @@ async function dadosDestinatario(v) {
       const buscaIbge = async () => { if (soDig($('#dd_cMun').value).length === 7 || !$('#dd_municipio').value.trim()) return; const c = await codigoMunicipio($('#dd_municipio').value, ($('#dd_uf').value || 'BA').toUpperCase()); if (c) $('#dd_cMun').value = c; };
       $('#dd_municipio').addEventListener('change', buscaIbge); $('#dd_uf').addEventListener('change', buscaIbge); buscaIbge();
       $('#dd_ind').onchange = () => { if ($('#dd_ind').value === '1') $('#dd_final').value = '0'; };
+      // CNPJ digitado ou trocado na janela: busca o endereço e a IE sozinho (e pelo botão 🔎).
+      const docBox = $('#dd_doc').parentElement; docBox.insertAdjacentHTML('beforeend', '<button type="button" class="btn mini" id="dd_busca" title="Buscar endereço pelo CNPJ" style="margin-top:4px;font-size:13px;font-weight:600">🔎 Buscar pelo CNPJ</button><small id="dd_st" style="color:var(--muted);display:block"></small>');
+      let ultimo = '';
+      const buscar = async (forcar) => {
+        const c = soDig($('#dd_doc').value); if (c.length !== 14 || (!forcar && c === ultimo)) return; ultimo = c;
+        $('#dd_st').textContent = 'Buscando o CNPJ…'; const r = await dadosDoCnpj(c);
+        if (!r) { $('#dd_st').textContent = 'CNPJ não encontrado: preencha à mão.'; return; }
+        Object.entries(r.dados).forEach(([k, v]) => { if (k === 'final') $('#dd_final').value = v ? '1' : '0'; else if ($('#dd_' + k) && v != null && v !== '') $('#dd_' + k).value = v; });
+        $('#dd_st').textContent = '✅ Preenchido pelo ' + r.fonte + '. Confira.';
+      };
+      $('#dd_busca').onclick = () => buscar(true); $('#dd_doc').addEventListener('input', () => buscar(false));
+      if (soDig($('#dd_doc').value).length === 14 && !$('#dd_logradouro').value) buscar(true);
     });
 }
 // Monta o XML da NF-e 4.00 (sem assinatura) e devolve a chave e os totais.
