@@ -103,3 +103,17 @@ tr.clica:hover td{background:#f7fafd}
 .chip.melhor{border-color:var(--green);background:#f1fae9}
 .chip small{color:var(--muted)}
 .dica{background:#fff8e6;border:1px solid #f3dca3;color:#7a5a00;border-radius:10px;padding:8px 12px;margin:8px 0;font-size:13.5px}
+/* Voltar, campos obrigatórios, conferência da nota e permissões */
+.topo-secao{display:flex;align-items:center;gap:12px;margin:0 0 14px;flex-wrap:wrap}
+.topo-secao h1{margin:0}
+.subtitulo{color:var(--azul);font-weight:700}
+.btn.voltar{padding:8px 14px;border-color:#c9d5e3}
+.falta{border-color:var(--red)!important;background:#fff5f5}
+.conferencia div{padding:5px 0;border-bottom:1px dashed var(--line);font-size:14px}
+.conf-erro{color:var(--red);font-weight:600}
+.conf-aviso{color:#8a6100}
+.conf-info{color:var(--muted)}
+.permissoes{display:flex;flex-wrap:wrap;gap:4px 12px}
+.permissoes label{display:flex;gap:5px;align-items:center;margin:0;color:var(--ink);font-size:13px;white-space:nowrap}
+.permissoes input{width:auto}
+.preco-item label{font-size:12px}
