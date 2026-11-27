@@ -72,8 +72,9 @@ window.addEventListener('hashchange', rotear);
 
 // ---------- permissões por usuário ----------
 // Áreas que o administrador libera para cada usuário (Admin › Usuários e acessos). Sem lista definida = todas liberadas.
-const AREAS = [['orcamentos', 'Orçamentos'], ['vendas', 'Vendas e a receber'], ['clientes', 'Clientes'], ['produtos', 'Produtos'], ['financeiro', 'Financeiro (resumo)']];
-const pode = (area) => ehAdmin() || !Array.isArray(S.perfil?.permissions) || S.perfil.permissions.includes(area);
+const AREAS = [['orcamentos', 'Orçamentos'], ['vendas', 'Vendas e a receber'], ['clientes', 'Clientes'], ['produtos', 'Produtos (consulta)'], ['financeiro', 'Financeiro (resumo)'], ['editar_produtos', 'Editar produtos e preços']];
+const pode = (area) => ehAdmin() || (area === 'editar_produtos' ? Array.isArray(S.perfil?.permissions) && S.perfil.permissions.includes(area) : !Array.isArray(S.perfil?.permissions) || S.perfil.permissions.includes(area));
+const podeEditarProdutos = () => pode('editar_produtos');
 function areaDoEndereco(h) {
   if (/^#\/orcamento/.test(h)) return 'orcamentos';
   if (h === '#/financeiro/receber') return pode('vendas') ? 'vendas' : 'financeiro';
@@ -157,13 +158,13 @@ const SECOES = {
   orcamentos: ['Orçamentos', [['#/orcamento/novo', 'novo', 'Novo orçamento'], ['#/orcamentos/abertos', 'orcamentos', 'Orçamentos em aberto'], ['#/orcamentos/todos', 'lista', 'Todos os orçamentos']]],
   vendas: ['Vendas', [['#/vendas/lista', 'vendas', 'Vendas do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/vendas/devolvidas', 'devolucao', 'Devoluções']]],
   clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
-  produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
+  produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1]]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
   notas: ['Notas fiscais', [['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
-const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || ehAdmin()).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
+const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
 async function telaSecao(nome) { if ((nome === 'admin' || nome === 'notas') && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
 function montarMenu(h) {
   $('#topo').hidden = false;
@@ -202,10 +203,10 @@ function telaLogin(modo = 'entrar') {
   <div class="card"><h1>${titulo}</h1><form id="f">
     ${modo === 'cadastro' ? '<label>Seu nome</label><input name="nome" required>' : ''}
     ${modo === 'entrar' ? '<label>Nº do usuário ou e-mail</label><input name="email" required autocomplete="username" placeholder="Ex.: 8">' : '<label>E-mail</label><input name="email" type="email" required autocomplete="email">'}
-    ${modo !== 'esqueci' ? `<label>Senha</label><input name="senha" type="password" minlength="6" required autocomplete="${modo === 'cadastro' ? 'new-password' : 'current-password'}">` : ''}
+    ${modo !== 'esqueci' ? `<label>Senha</label><input name="senha" type="password" minlength="8" required autocomplete="${modo === 'cadastro' ? 'new-password' : 'current-password'}">` : ''}
     <div class="acoes"><button class="btn pri grande">${titulo}</button></div></form>
     <div class="acoes">
-      ${modo !== 'entrar' ? '<a href="#" data-m="entrar">Já tenho acesso</a>' : '<a href="#" data-m="cadastro">Criar acesso</a> · <a href="#" data-m="esqueci">Esqueci a senha</a>'}
+      ${modo !== 'entrar' ? '<a href="#" data-m="entrar">Já tenho acesso</a>' : '<a href="#" data-m="esqueci">Esqueci a senha</a> · <small style="color:var(--muted)">Não tem acesso? Peça ao administrador da HIGIVARO.</small>'}
     </div></div></div>`;
   $$('[data-m]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); telaLogin(a.dataset.m); }));
   $('#f').onsubmit = async (e) => {
@@ -237,8 +238,8 @@ function telaTrocarSenha(obrigatoria) {
   $('#topo').hidden = !obrigatoria; if (obrigatoria) $('#menu').innerHTML = `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
   if ($('#sair')) $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
   app.innerHTML = `<div class="auth card"><h1>${obrigatoria ? 'Bem-vindo(a)! Crie a sua senha pessoal' : 'Criar nova senha'}</h1>
-    ${obrigatoria ? '<p style="color:var(--muted)">Você entrou com uma <b>senha temporária</b>. Para continuar, crie a sua senha pessoal (mínimo 6 caracteres, diferente da temporária). Só você vai saber essa senha.</p>' : ''}
-    <form id="f"><label>Nova senha</label><input name="s1" type="password" minlength="6" required autocomplete="new-password"><label>Repita a senha</label><input name="s2" type="password" minlength="6" required autocomplete="new-password"><div class="acoes"><button class="btn pri grande">Salvar minha senha</button></div></form></div>`;
+    ${obrigatoria ? '<p style="color:var(--muted)">Você entrou com uma <b>senha temporária</b>. Para continuar, crie a sua senha pessoal (mínimo 8 caracteres, diferente da temporária). Só você vai saber essa senha.</p>' : ''}
+    <form id="f"><label>Nova senha</label><input name="s1" type="password" minlength="8" required autocomplete="new-password"><label>Repita a senha</label><input name="s2" type="password" minlength="8" required autocomplete="new-password"><div class="acoes"><button class="btn pri grande">Salvar minha senha</button></div></form></div>`;
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
     if (f.s1 !== f.s2) return aviso('As senhas não são iguais.', true);
@@ -358,7 +359,7 @@ async function pdfTabela(titulo, subtitulo, quadros, cab, corpo, colunas, arquiv
   rodapePdf(pdf, c); pdf.save(`${arquivo}-${hoje()}.pdf`);
 }
 async function telaProdutos(modo) {
-  if ((modo === 'novo' || modo === 'importar') && !ehAdmin()) { location.hash = '#/produtos'; return; }
+  if ((modo === 'novo' || modo === 'importar') && !podeEditarProdutos()) { location.hash = '#/produtos'; return; }
   const topo = secao('produtos', '#/produtos/' + modo);
   if (modo === 'novo') { app.innerHTML = `${topo}<div id="form"></div>`; formProduto(null, () => (location.hash = '#/produtos/lista')); $('#cancela').onclick = () => (location.hash = '#/produtos'); return; }
   if (modo === 'importar') {
@@ -381,8 +382,8 @@ async function telaProdutos(modo) {
       for (const p of semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
       ps = await ok(q);
     } else ps = await buscarProdutos($('#busca').value, 200);
-    $('#lista').innerHTML = ps.map((p) => `<tr class="${ehAdmin() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
-    if (ehAdmin()) $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formProduto(ps.find((p) => p.id === tr.dataset.id), carregar)));
+    $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
+    if (podeEditarProdutos()) $('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formProduto(ps.find((p) => p.id === tr.dataset.id), carregar)));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
   carregar(); $('#busca').focus();
@@ -399,12 +400,12 @@ function formProduto(p, depois) {
     <h3 style="margin:14px 0 4px">Formação de preço</h3>
     <div class="linha"><div><label>Custo (R$) *</label><input name="cost" required inputmode="decimal" value="${dec(p.cost)}"></div><div><label>Frete (%)</label><input name="freight_pct" inputmode="decimal" value="${v('freight_pct')}"></div><div><label>Impostos (%)</label><input name="tax_pct" inputmode="decimal" value="${v('tax_pct')}"></div><div><label>Outros (%)</label><input name="other_pct" inputmode="decimal" value="${v('other_pct')}"></div><div><label>Margem (%) *</label><input name="margin_pct" required inputmode="decimal" value="${v('margin_pct')}"></div></div>
     <div class="linha"><div><label>Preço de venda (R$) *</label><input name="price" required inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:2 1 260px;align-self:flex-end"><p class="dica" id="sugPreco" style="margin:0"></p></div></div>
-    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${p.id ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
+    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${p.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
   $('#form').scrollIntoView({ behavior: 'smooth' });
   const calc = () => { const f = Object.fromEntries(new FormData($('#fp'))); const s = precoSugerido(num(f.cost), num(f.freight_pct), num(f.tax_pct), num(f.other_pct), num(f.margin_pct)); $('#sugPreco').innerHTML = num(f.cost) ? `Preço sugerido: <b>${brl(s)}</b> <button type="button" class="btn" id="usarSug" style="padding:3px 10px;margin-left:6px">Usar</button>` : 'Informe o custo para calcular o preço sugerido.'; if ($('#usarSug')) $('#usarSug').onclick = () => { $('#fp').price.value = String(s).replace('.', ','); S.sujo = true; }; };
   ['cost', 'freight_pct', 'tax_pct', 'other_pct', 'margin_pct'].forEach((n) => ($('#fp')[n].oninput = calc)); calc();
   $('#cancela').onclick = () => ($('#form').innerHTML = '');
-  if (p.id) $('#apaga').onclick = async () => { if (!confirm('Excluir este produto?')) return; try { await ok(sb.from('products').delete().eq('id', p.id)); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
+  if (p.id && $('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir este produto?')) return; try { await ok(sb.from('products').delete().eq('id', p.id)); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
   $('#fp').onsubmit = async (e) => {
     e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
     if (!num(f.price)) return aviso('Informe o preço de venda.', true);
@@ -1334,7 +1335,7 @@ async function telaAdmin(modo) {
     <td><select data-c="access_status" ${u.id === S.perfil.id ? 'disabled' : ''}><option ${u.access_status === 'liberado' ? 'selected' : ''}>liberado</option><option ${u.access_status === 'aguardando' ? 'selected' : ''}>aguardando</option></select></td>
     <td><select data-c="role" ${u.id === S.perfil.id ? 'disabled' : ''}><option value="user" ${u.role === 'user' ? 'selected' : ''}>vendedor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select></td>
     <td><input type="checkbox" data-c="active" ${u.active ? 'checked' : ''} ${u.id === S.perfil.id ? 'disabled' : ''} style="width:auto"></td>
-    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${!Array.isArray(u.permissions) || u.permissions.includes(a) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
+    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${(a === 'editar_produtos' ? Array.isArray(u.permissions) && u.permissions.includes(a) : !Array.isArray(u.permissions) || u.permissions.includes(a)) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
     <td>${u.id === S.perfil.id ? '' : `<button class="btn" data-senha="${u.id}" style="padding:5px 10px;font-size:13px">Nova senha temporária</button> <button class="btn perigo" data-apagar="${u.id}" style="padding:5px 10px;font-size:13px">Apagar</button>`}${u.must_change_password ? '<br><small style="color:#9a6700">aguardando criar a senha pessoal</small>' : ''}</td></tr>`).join('')}
   </tbody></table></div></div>`;
   // Senha temporária: 8 caracteres fáceis de ditar (sem 0/O, 1/l), para o admin repassar ao usuário.
@@ -1349,9 +1350,9 @@ async function telaAdmin(modo) {
   $('#novoUsuario').onclick = () => {
     $('#formUsuario').innerHTML = `<div class="card"><h2 style="margin-top:0">Novo usuário</h2><form id="fu">
       <div class="linha"><div style="flex:2 1 240px"><label>Nome *</label><input name="nome" required></div><div style="flex:2 1 240px"><label>E-mail *</label><input name="email" type="email" required autocomplete="off"></div><div style="flex:0 1 140px"><label>Nº de login *</label><input name="numero" type="number" min="1" max="99999" required value="${proxNum}"></div></div>
-      <div class="linha"><div><label>Senha temporária * (mínimo 6)</label><div class="linha" style="gap:6px"><input name="senha" id="senhaTemp" required minlength="6" autocomplete="new-password"><button type="button" class="btn" id="gerar" style="flex:0 0 auto">Gerar</button></div></div>
+      <div class="linha"><div><label>Senha temporária * (mínimo 8)</label><div class="linha" style="gap:6px"><input name="senha" id="senhaTemp" required minlength="8" autocomplete="new-password"><button type="button" class="btn" id="gerar" style="flex:0 0 auto">Gerar</button></div></div>
         <div style="flex:0 1 200px"><label>Tipo</label><select name="tipo" id="tipoU"><option value="user">Vendedor</option><option value="admin">Administrador</option></select></div></div>
-      <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" checked> ${rot}</label>`).join('')}</div></div>
+      <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" ${a === 'editar_produtos' ? '' : 'checked'}> ${rot}</label>`).join('')}</div></div>
       <p class="dica">Passe o e-mail e a senha temporária para a pessoa. No primeiro acesso, o sistema pede para ela criar a própria senha; a temporária deixa de valer.</p>
       <div class="acoes"><button class="btn pri">Criar usuário</button><button type="button" class="btn" id="cancelaU">Cancelar</button></div></form></div>`;
     $('#gerar').onclick = () => { $('#senhaTemp').value = gerarSenha(); S.sujo = true; };
