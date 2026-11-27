@@ -1845,7 +1845,7 @@ async function detalheNFe(n, depois) {
     <div class="acoes"><button type="button" class="btn azul" id="dXml">⬇️ Baixar XML</button>${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
     ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
     'Fechar', null, () => {
-      $('.fundo-dialogo:last-child .dialogo').classList.add('largo');
+      $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('#dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
       $('#dXml').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml,xml_cancelamento,chave').eq('id', n.id).single()); if (!x.xml) return aviso('Esta nota não tem XML guardado.', true); baixarArquivo(`NFe${x.chave}.xml`, x.xml); if (x.xml_cancelamento) baixarArquivo(`NFe${x.chave}-cancelamento.xml`, x.xml_cancelamento); } catch (e) { falhou(e); } };
       if ($('#dCancelar')) $('#dCancelar').onclick = () => { $('.fundo-dialogo:last-child').remove(); cancelarNFe(n, depois); };
     });
