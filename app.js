@@ -724,7 +724,10 @@ async function telaDespesas(modo) {
   const topo = secao('financeiro', modo === 'nova' ? '#/financeiro/despesas/nova' : '#/financeiro/despesas');
   if (modo === 'nova') { app.innerHTML = `${topo}<div id="form"></div>`; formDespesa(null, () => (location.hash = '#/financeiro/despesas'), () => (location.hash = '#/financeiro')); return; }
   app.innerHTML = `${topo}
-  <div class="linha"><input id="mes" type="month" value="${hoje().slice(0, 7)}" style="flex:0 1 190px"><select id="sit" style="flex:0 1 190px"><option value="">Todas do mês</option><option value="aberto">Em aberto (a pagar)</option><option value="vencidas">Vencidas</option><option value="pago">Pagas</option></select><input id="busca" placeholder="Descrição ou fornecedor"></div>
+  <div class="linha"><div style="flex:0 1 210px"><label>Mês de vencimento</label><input id="mes" type="month" value="" title="Deixe vazio para ver todos os meses"></div>
+    <div style="flex:0 1 210px"><label>Situação</label><select id="sit"><option value="aberto" selected>Em aberto (a pagar)</option><option value="vencidas">Vencidas</option><option value="pago">Pagas</option><option value="">Todas</option></select></div>
+    <div><label>Buscar</label><input id="busca" placeholder="Descrição ou fornecedor"></div></div>
+  <p style="color:var(--muted);margin:6px 0 0;font-size:13px">Mês vazio = todos os meses. Clique numa despesa para editar, marcar como paga ou excluir.</p>
   <div class="acoes"><a class="btn pri" href="#/financeiro/despesas/nova">＋ Nova despesa</a><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
   <div id="form"></div><div id="kpis" class="grade" style="margin-top:12px"></div><div id="cats"></div>
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Vencimento</th><th>Descrição</th><th class="esconde-cel">Categoria</th><th class="esconde-cel">Fornecedor</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody id="lista"></tbody></table></div>`;
@@ -761,8 +764,19 @@ function formDespesa(d, depois, aoCancelar) {
     <div class="linha" id="boxPago"><div><label>Data do pagamento</label><input type="date" name="paid_at" value="${String(d.paid_at || hoje()).slice(0, 10)}"></div><div><label>Forma de pagamento</label><select name="payment_method">${FORMAS.map((f) => `<option ${f === d.payment_method ? 'selected' : ''}>${f}</option>`).join('')}</select></div></div>
     ${d.id ? '' : '<div class="linha"><div style="flex:0 1 260px"><label>Repetir nos próximos meses (ex.: aluguel)</label><select name="repetir"><option value="1">Não repetir</option>' + [2, 3, 6, 12].map((n) => `<option value="${n}">${n} meses (inclui este)</option>`).join('') + '</select></div></div>'}
     <label>Observações</label><textarea name="notes">${esc(d.notes)}</textarea>
-    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${d.id ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
+    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${d.id ? '<button type="button" class="btn perigo" id="apaga">Excluir</button><button type="button" class="btn perigo" id="apagaProx" hidden></button>' : ''}</div></form></div>`;
   $('#form').scrollIntoView({ behavior: 'smooth' });
+  // Despesa repetida (lançada junto com outras, ex.: DAS 12 meses): permite excluir esta e as próximas de uma vez.
+  if (d.id && d.created_at) {
+    sb.from('expenses').select('id,due_date').eq('created_at', d.created_at).eq('description', d.description).eq('status', 'aberto').gte('due_date', String(d.due_date).slice(0, 10)).then(({ data }) => {
+      if (!data || data.length < 2 || !$('#apagaProx')) return;
+      const b = $('#apagaProx'); b.hidden = false; b.textContent = `Excluir esta e as próximas (${data.length})`;
+      b.onclick = async () => {
+        if (!confirm(`Excluir ${data.length} despesas "${d.description}" (de ${dataBR(d.due_date)} em diante, só as não pagas)?`)) return;
+        try { await ok(sb.from('expenses').delete().in('id', data.map((x) => x.id))); aviso(`${data.length} despesas excluídas.`); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); }
+      };
+    });
+  }
   const sinc = () => ($('#boxPago').hidden = !$('#pago').checked); $('#pago').onchange = sinc; sinc();
   $('#cancela').onclick = () => (aoCancelar ? aoCancelar() : ($('#form').innerHTML = ''));
   if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir a despesa "' + d.description + '"?')) return; try { await ok(sb.from('expenses').delete().eq('id', d.id)); aviso('Despesa excluída.'); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
