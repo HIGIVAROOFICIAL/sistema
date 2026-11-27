@@ -52,6 +52,7 @@ const ROTAS = [
   [/^#\/financeiro\/despesas\/nova$/, () => telaDespesas('nova')],
   [/^#\/admin$/, () => telaSecao('admin')],
   [/^#\/notas$/, () => telaSecao('notas')],
+  [/^#\/notas\/emitidas$/, telaNFeEmitidas],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
   [/^#\/admin\/(empresa|usuarios|precos)$/, (m) => telaAdmin(m)],
@@ -75,8 +76,10 @@ window.addEventListener('hashchange', rotear);
 
 // ---------- permissões por usuário ----------
 // Áreas que o administrador libera para cada usuário (Admin › Usuários e acessos). Sem lista definida = todas liberadas.
-const AREAS = [['orcamentos', 'Orçamentos'], ['vendas', 'Vendas e a receber'], ['clientes', 'Clientes'], ['produtos', 'Produtos (consulta)'], ['financeiro', 'Financeiro (resumo)'], ['editar_produtos', 'Editar produtos e preços']];
-const pode = (area) => ehAdmin() || (area === 'editar_produtos' ? Array.isArray(S.perfil?.permissions) && S.perfil.permissions.includes(area) : !Array.isArray(S.perfil?.permissions) || S.perfil.permissions.includes(area));
+const AREAS = [['orcamentos', 'Orçamentos'], ['vendas', 'Vendas e a receber'], ['clientes', 'Clientes'], ['produtos', 'Produtos (consulta)'], ['financeiro', 'Financeiro (resumo)'], ['editar_produtos', 'Editar produtos e preços'], ['emitir_nfe', 'Emitir e cancelar NF-e']];
+// "Editar produtos" e "Emitir NF-e" só valem se o administrador marcar; as outras áreas valem quando não há lista definida.
+const AREAS_EXPLICITAS = ['editar_produtos', 'emitir_nfe'];
+const pode = (area) => ehAdmin() || (AREAS_EXPLICITAS.includes(area) ? Array.isArray(S.perfil?.permissions) && S.perfil.permissions.includes(area) : !Array.isArray(S.perfil?.permissions) || S.perfil.permissions.includes(area));
 const podeEditarProdutos = () => pode('editar_produtos');
 function areaDoEndereco(h) {
   if (/^#\/orcamento/.test(h)) return 'orcamentos';
@@ -166,16 +169,17 @@ const SECOES = {
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1]]],
-  notas: ['Notas fiscais', [['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
+  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
-const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
-async function telaSecao(nome) { if ((nome === 'admin' || nome === 'notas') && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
+const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : i[3] === 'nfe' ? pode('emitir_nfe') || pode('vendas') : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
+async function telaSecao(nome) { if ((nome === 'admin' || (nome === 'notas' && !pode('emitir_nfe'))) && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
 function montarMenu(h) {
   $('#topo').hidden = false;
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
   const itens = [['#/', 'Início', 'inicio'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
-  if (ehAdmin()) itens.push(['#/notas', 'Notas fiscais', 'nota'], ['#/admin', 'Admin', 'admin']);
+  if (ehAdmin() || pode('emitir_nfe')) itens.push(['#/notas', 'Notas fiscais', 'nota']);
+  if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
   for (let k = itens.length - 1; k > 0; k--) { const area = itens[k][0].slice(2); if (AREAS.some(([a]) => a === area) && !pode(area)) itens.splice(k, 1); }
   const ativo = (href) => h === href || (href !== '#/' && h.startsWith(href + '/')) || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/notas' && h.startsWith('#/nota/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
@@ -1728,7 +1732,7 @@ async function telaAdmin(modo) {
     <td><select data-c="access_status" ${u.id === S.perfil.id ? 'disabled' : ''}><option ${u.access_status === 'liberado' ? 'selected' : ''}>liberado</option><option ${u.access_status === 'aguardando' ? 'selected' : ''}>aguardando</option></select></td>
     <td><select data-c="role" ${u.id === S.perfil.id ? 'disabled' : ''}><option value="user" ${u.role === 'user' ? 'selected' : ''}>vendedor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select></td>
     <td><input type="checkbox" data-c="active" ${u.active ? 'checked' : ''} ${u.id === S.perfil.id ? 'disabled' : ''} style="width:auto"></td>
-    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${(a === 'editar_produtos' ? Array.isArray(u.permissions) && u.permissions.includes(a) : !Array.isArray(u.permissions) || u.permissions.includes(a)) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
+    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${(AREAS_EXPLICITAS.includes(a) ? Array.isArray(u.permissions) && u.permissions.includes(a) : !Array.isArray(u.permissions) || u.permissions.includes(a)) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
     <td>${u.id === S.perfil.id ? '' : `<button class="btn" data-senha="${u.id}" style="padding:5px 10px;font-size:13px">Nova senha temporária</button> <button class="btn perigo" data-apagar="${u.id}" style="padding:5px 10px;font-size:13px">Apagar</button>`}${u.must_change_password ? '<br><small style="color:#9a6700">aguardando criar a senha pessoal</small>' : ''}</td></tr>`).join('')}
   </tbody></table></div></div>`;
   // Senha temporária: 8 caracteres fáceis de ditar (sem 0/O, 1/l), para o admin repassar ao usuário.
@@ -1745,7 +1749,7 @@ async function telaAdmin(modo) {
       <div class="linha"><div style="flex:2 1 240px"><label>Nome *</label><input name="nome" required></div><div style="flex:2 1 240px"><label>E-mail *</label><input name="email" type="email" required autocomplete="off"></div><div style="flex:0 1 140px"><label>Nº de login *</label><input name="numero" type="number" min="1" max="99999" required value="${proxNum}"></div></div>
       <div class="linha"><div><label>Senha temporária * (mínimo 8)</label><div class="linha" style="gap:6px"><input name="senha" id="senhaTemp" required minlength="8" autocomplete="new-password"><button type="button" class="btn" id="gerar" style="flex:0 0 auto">Gerar</button></div></div>
         <div style="flex:0 1 200px"><label>Tipo</label><select name="tipo" id="tipoU"><option value="user">Vendedor</option><option value="admin">Administrador</option></select></div></div>
-      <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" ${a === 'editar_produtos' ? '' : 'checked'}> ${rot}</label>`).join('')}</div></div>
+      <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" ${AREAS_EXPLICITAS.includes(a) ? '' : 'checked'}> ${rot}</label>`).join('')}</div></div>
       <p class="dica">Passe o e-mail e a senha temporária para a pessoa. No primeiro acesso, o sistema pede para ela criar a própria senha; a temporária deixa de valer.</p>
       <div class="acoes"><button class="btn pri">Criar usuário</button><button type="button" class="btn" id="cancelaU">Cancelar</button></div></form></div>`;
     $('#gerar').onclick = () => { $('#senhaTemp').value = gerarSenha(); S.sujo = true; };
@@ -1793,6 +1797,77 @@ async function telaAdmin(modo) {
     const v = el.type === 'checkbox' ? el.checked : el.value;
     try { await ok(sb.from('profiles').update({ [el.dataset.c]: v }).eq('id', el.closest('tr').dataset.id)); aviso('Usuário atualizado.'); if (el.dataset.c === 'role') telaAdmin(modo); } catch (err) { falhou(err); }
   }));
+}
+// ---------- NF-e emitidas: registro, XML e cancelamento ----------
+// Cada NF-e fica registrada (quem emitiu, quando, de qual aparelho). A cada emissão ou cancelamento o banco manda e-mail ao dono.
+const seloNFe = (n) => `<span class="selo ${n.status === 'autorizada' ? 'recebido' : n.status === 'cancelada' ? 'vencido' : 'devolvida'}">${n.status}</span>${n.ambiente !== '1' ? ' <span class="selo devolvida">teste</span>' : ''}`;
+// O assinador (certificado da HIGIVARO) é chamado por aqui; a forma de assinar (programa no PC ou cofre do servidor) fica escondida atrás desta função.
+async function assinadorNFe(caminho, dados) {
+  let r;
+  try { r = await fetch('http://localhost:8765' + caminho, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados) }); }
+  catch { throw new Error('o assinador de NF-e não está disponível neste computador'); }
+  const j = await r.json(); if (!j.ok) throw new Error(j.erro || 'falha no assinador'); return j;
+}
+const dhBahia = () => { const d = new Date(Date.now() - 3 * 3600e3); return d.toISOString().slice(0, 19) + '-03:00'; };
+function baixarArquivo(nome, texto, tipo = 'application/xml') { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([texto], { type: tipo })); a.download = nome; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+async function telaNFeEmitidas() {
+  if (!pode('emitir_nfe') && !pode('vendas')) { app.innerHTML = '<p class="vazio">Sem acesso às NF-e.</p>'; return; }
+  app.innerHTML = `${secao('notas', '#/notas/emitidas')}
+  <div class="linha"><div style="flex:0 1 200px"><label>Mês</label><input id="mes" type="month" value="" title="Vazio = todos os meses"></div>
+    <div style="flex:0 1 200px"><label>Situação</label><select id="sit"><option value="">Todas</option><option>autorizada</option><option>cancelada</option><option>rejeitada</option></select></div>
+    <div><label>Buscar</label><input id="busca" placeholder="Cliente, nº da nota ou chave"></div></div>
+  <p style="color:var(--muted);margin:6px 0 0;font-size:13px">📧 A cada NF-e emitida ou cancelada o sistema manda um e-mail para o administrador. Clique numa nota para ver os detalhes, baixar o XML ou cancelar.</p>
+  <div id="kpis" class="grade" style="margin-top:12px"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Emitida em</th><th>NF-e</th><th>Cliente</th><th class="num">Valor</th><th>Situação</th><th class="esconde-cel">Emitida por</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let ns = [];
+  const carregar = async () => {
+    let q = sb.from('nfe').select('id,sale_id,ambiente,serie,numero,chave,status,cstat,motivo,protocolo,valor,cliente,cliente_doc,emitida_por,emitida_em,dispositivo,cancelada_por,cancelada_em,motivo_cancelamento,protocolo_cancelamento').order('emitida_em', { ascending: false }).limit(1000);
+    const m = $('#mes').value; if (m) { const [a, b] = mesRange(m); q = q.gte('emitida_em', a + 'T00:00:00-03:00').lte('emitida_em', b + 'T23:59:59-03:00'); }
+    if ($('#sit').value) q = q.eq('status', $('#sit').value);
+    const t = limpaBusca($('#busca').value); if (t) q = q.or(`cliente.ilike.%${t}%,chave.ilike.%${t}%` + (/^[0-9]{1,9}$/.test(t) ? `,numero.eq.${t}` : ''));
+    ns = await ok(q);
+    const aut = ns.filter((n) => n.status === 'autorizada');
+    $('#kpis').innerHTML = `<div class="kpi"><small>Autorizadas</small><strong>${aut.length}</strong></div><div class="kpi"><small>Valor autorizado</small><strong>${brl(aut.reduce((s, n) => s + Number(n.valor || 0), 0))}</strong></div><div class="kpi"><small>Canceladas</small><strong style="color:var(--red)">${ns.filter((n) => n.status === 'cancelada').length}</strong></div>`;
+    $('#lista').innerHTML = ns.map((n, k) => `<tr class="clica" data-k="${k}"><td>${new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17)}</td><td>nº ${esc(n.numero ?? '')} <small style="color:var(--muted)">série ${esc(n.serie ?? '')}</small></td><td>${esc(n.cliente || '')}</td><td class="num">${brl(n.valor)}</td><td>${seloNFe(n)}</td><td class="esconde-cel">${esc(n.emitida_por || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma NF-e emitida ainda.</td></tr>';
+    $$('#lista tr[data-k]').forEach((tr) => (tr.onclick = () => detalheNFe(ns[tr.dataset.k], carregar)));
+  };
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; $('#sit').onchange = carregar;
+  carregar();
+}
+async function detalheNFe(n, depois) {
+  const horas = (Date.now() - new Date(n.emitida_em).getTime()) / 3600e3;
+  const podeCancelar = n.status === 'autorizada' && pode('emitir_nfe');
+  const linha = (r, v) => v ? `<tr><td style="color:var(--muted);padding:3px 12px 3px 0">${r}</td><td><b>${esc(v)}</b></td></tr>` : '';
+  const acao = await dialogo(`<h2 style="margin-top:0">NF-e nº ${esc(n.numero ?? '')} ${seloNFe(n)}</h2>
+    <table style="font-size:14px">${linha('Cliente', (n.cliente || '') + (n.cliente_doc ? ' · ' + n.cliente_doc : ''))}${linha('Valor', brl(n.valor))}${linha('Série', String(n.serie ?? ''))}${linha('Chave', n.chave)}${linha('Protocolo', n.protocolo)}${linha('SEFAZ', (n.cstat || '') + ' ' + (n.motivo || ''))}
+    ${linha('Emitida por', n.emitida_por)}${linha('Emitida em', new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }))}${linha('Aparelho', n.dispositivo)}
+    ${n.status === 'cancelada' ? linha('Cancelada por', n.cancelada_por) + linha('Cancelada em', new Date(n.cancelada_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' })) + linha('Motivo', n.motivo_cancelamento) + linha('Protocolo do cancelamento', n.protocolo_cancelamento) : ''}</table>
+    <div class="acoes"><button type="button" class="btn azul" id="dXml">⬇️ Baixar XML</button>${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
+    ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
+    'Fechar', null, () => {
+      $('.fundo-dialogo:last-child .dialogo').classList.add('largo');
+      $('#dXml').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml,xml_cancelamento,chave').eq('id', n.id).single()); if (!x.xml) return aviso('Esta nota não tem XML guardado.', true); baixarArquivo(`NFe${x.chave}.xml`, x.xml); if (x.xml_cancelamento) baixarArquivo(`NFe${x.chave}-cancelamento.xml`, x.xml_cancelamento); } catch (e) { falhou(e); } };
+      if ($('#dCancelar')) $('#dCancelar').onclick = () => { $('.fundo-dialogo:last-child').remove(); cancelarNFe(n, depois); };
+    });
+  return acao;
+}
+// Cancelamento (evento 110111): justificativa de 15 a 255 letras, assinada com o certificado e enviada à SEFAZ-BA.
+async function cancelarNFe(n, depois) {
+  const motivo = await dialogo(`<h2 style="margin-top:0">Cancelar NF-e nº ${esc(n.numero ?? '')}</h2><p>${esc(n.cliente || '')} · <b>${brl(n.valor)}</b></p>
+    <label>Motivo do cancelamento * <small>(mínimo 15 letras; vai para a SEFAZ)</small></label><textarea id="dMotivo" rows="3" maxlength="255" placeholder="Ex.: venda desfeita a pedido do cliente antes da entrega"></textarea>
+    <p class="dica">O cancelamento não pode ser desfeito. Um e-mail de aviso será enviado ao administrador.</p>`, 'Cancelar a nota',
+    () => { const m = $('#dMotivo').value.trim().replace(/\s+/g, ' '); if (m.length < 15) { $('#dMotivo').classList.add('falta'); aviso('O motivo precisa ter pelo menos 15 letras.', true); return undefined; } return m; },
+    () => setTimeout(() => $('#dMotivo').focus(), 30));
+  if (!motivo) return;
+  const semAc = motivo.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[<>&"']/g, ' ');
+  const xml = `<evento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe"><infEvento Id="ID110111${n.chave}01"><cOrgao>29</cOrgao><tpAmb>${n.ambiente}</tpAmb><CNPJ>69959700000104</CNPJ><chNFe>${n.chave}</chNFe><dhEvento>${dhBahia()}</dhEvento><tpEvento>110111</tpEvento><nSeqEvento>1</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00"><descEvento>Cancelamento</descEvento><nProt>${n.protocolo}</nProt><xJust>${semAc}</xJust></detEvento></infEvento></evento>`;
+  try {
+    aviso('Enviando o cancelamento para a SEFAZ-BA…');
+    const r = await assinadorNFe('/evento', { amb: n.ambiente, xml });
+    if (!['135', '155'].includes(String(r.cStat))) throw new Error(`SEFAZ recusou (${r.cStat || r.loteStat}): ${r.xMotivo || r.loteMotivo}`);
+    await ok(sb.rpc('registrar_cancelamento_nfe', { p_id: n.id, p_motivo: motivo, p_protocolo: r.protocolo, p_xml: r.xmlEvento }));
+    aviso('NF-e cancelada. Cancelamento registrado.'); depois && depois();
+  } catch (e) { falhou(e); }
 }
 // E-mail de boas-vindas (função "boas-vindas" no Supabase, envia pelo Gmail da HIGIVARO). Nunca trava o cadastro se falhar.
 async function enviarBoasVindas(userId) {
