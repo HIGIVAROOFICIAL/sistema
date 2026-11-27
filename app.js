@@ -957,9 +957,13 @@ async function telaNotaEntrada(id) {
   <div class="card"><h2 style="margin-top:0">NF ${esc(n.number || '')}${n.series ? ' / série ' + esc(n.series) : ''} · ${esc(n.supplier_name || '')}</h2>
     ${esc(n.supplier_cnpj || '')} · emissão ${dataBR(n.issue_date)} · total <b>${brl(n.total)}</b> · lançada por ${esc(n.created_by || '')} em ${new Date(n.created_at).toLocaleDateString('pt-BR')} (origem: ${esc(n.source.toUpperCase())})
     ${n.access_key ? `<br><small style="color:var(--muted)">Chave: ${esc(n.access_key)}</small>` : ''}
-    ${n.xml ? '<div class="acoes"><button class="btn" id="baixarXml">Baixar XML</button></div>' : ''}</div>
+    <div class="acoes">${n.xml ? '<button class="btn" id="baixarXml">Baixar XML</button>' : ''}<button class="btn perigo" id="estornar">Excluir nota (desfazer entrada)</button></div></div>
   <div class="tabela"><table><thead><tr><th>Item da nota</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Fator</th><th>Produto no estoque</th><th class="num">Entrou</th></tr></thead><tbody>
   ${its.map((i) => `<tr><td>${esc(i.description)}<br><small style="color:var(--muted)">${esc(i.supplier_code || '')} ${esc(i.unit || '')}</small></td><td class="num">${i.quantity}</td><td class="num">${brl(i.unit_cost)}</td><td class="num">${i.factor}</td><td>${i.products ? esc(i.products.code + ' · ' + i.products.description) : '<span style="color:var(--muted)">—</span>'}</td><td class="num"><b>${i.stock_added}</b></td></tr>`).join('')}</tbody></table></div>`;
+  $('#estornar').onclick = async () => {
+    if (!confirm(`Excluir a NF ${n.number || ''} de ${n.supplier_name || ''}?\n\nO estoque que entrou por ela será retirado e as parcelas lançadas em Despesas serão apagadas. Produtos cadastrados por ela continuam cadastrados.`)) return;
+    try { await ok(sb.rpc('estornar_entrada', { p_id: id })); aviso('Nota excluída e entrada desfeita.'); location.hash = '#/notas/lista'; } catch (e) { falhou(e); }
+  };
   if ($('#baixarXml')) $('#baixarXml').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([n.xml], { type: 'text/xml' })); a.download = `NF-${n.number || 'entrada'}.xml`; a.click(); };
 }
 
