@@ -262,35 +262,42 @@ sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') telaTrocarSe
 // Tela inicial: logo da HIGIVARO + janelas com os avisos do dia (vencimentos de hoje, atrasados, validade dos lotes).
 // Cada janela só aparece para quem tem acesso àquela área.
 async function telaInicio() {
-  const agora = new Date(), hora = Number(agora.toLocaleString('pt-BR', { timeZone: 'America/Bahia', hour: '2-digit', hour12: false }));
-  const saud = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
-  const dia = agora.toLocaleDateString('pt-BR', { timeZone: 'America/Bahia', weekday: 'long', day: 'numeric', month: 'long' });
-  const nome = String(S.perfil?.full_name || '').trim().split(/\s+/)[0] || '';
-  app.innerHTML = `<div class="inicio-logo pequena"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>
-  <p class="saudacao">${saud}${nome ? ', <b>' + esc(nome[0].toUpperCase() + nome.slice(1).toLowerCase()) + '</b>' : ''}! Hoje é ${esc(dia)}.</p>
-  <div id="painel" class="painel"><p class="carregando">Carregando os avisos do dia…</p></div>`;
-  let d; try { d = await ok(sb.rpc('painel_inicio')); } catch (e) { console.error(e); $('#painel').innerHTML = ''; return; }
+  app.innerHTML = `<div class="inicio-logo"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>`;
+  // Avisos do dia: abrem uma vez por dia em cada navegador, logo depois de entrar.
+  const chave = `avisos-${S.perfil?.id}-${hoje()}`;
+  let visto = false; try { visto = sessionStorage.getItem(chave) === '1'; sessionStorage.setItem(chave, '1'); } catch { /* sem armazenamento: mostra sempre */ }
+  if (!visto) mostrarAvisos();
+}
+// Janelas de aviso sobre a tela (cada uma com ✕): vencimentos de hoje a receber / a pagar e produtos perto da validade.
+async function mostrarAvisos() {
+  let d; try { d = await ok(sb.rpc('painel_inicio')); } catch (e) { console.error(e); return; }
+  if (!location.hash.match(/^#\/?$/)) return; // a pessoa já saiu da tela inicial
   const soma = (l) => l.reduce((s, x) => s + Number(x.valor || 0), 0);
-  const lista = (itens, linha, vazio, max = 5) => itens.length ? `<ul>${itens.slice(0, max).map(linha).join('')}</ul>${itens.length > max ? `<small class="mais">+ ${itens.length - max} ${itens.length - max === 1 ? 'outro' : 'outros'}</small>` : ''}` : `<p class="tudo-ok">${vazio}</p>`;
+  const lista = (itens, linha, max = 5) => `<ul>${itens.slice(0, max).map(linha).join('')}</ul>${itens.length > max ? `<small class="mais">+ ${itens.length - max} ${itens.length - max === 1 ? 'outro' : 'outros'}</small>` : ''}`;
   const rodape = (at, p7, fem) => `<div class="rodape-janela"><span class="${at?.n ? 'ruim' : ''}">⚠️ ${fem ? 'Atrasadas' : 'Atrasados'}: <b>${at?.n || 0}</b>${at?.n ? ' · ' + brl(at.valor) : ''}</span><span>📅 Próximos 7 dias: <b>${p7?.n || 0}</b>${p7?.n ? ' · ' + brl(p7.valor) : ''}</span></div>`;
+  const janela = (cls, titulo, corpo, href, rotLink) => `<div class="janela ${cls}"><button class="fechar-janela" title="Fechar">✕</button><h3>${titulo}</h3>${corpo}${href ? `<a class="ver-mais" href="${href}">${rotLink} →</a>` : ''}</div>`;
   const jan = [];
-  if (d.receber_hoje) jan.push(`<a class="janela receber" href="#/financeiro/receber"><h3>💰 Vencem hoje · a receber</h3>
-    <div class="valor">${brl(soma(d.receber_hoje))}<small>${d.receber_hoje.length} ${d.receber_hoje.length === 1 ? 'venda' : 'vendas'}</small></div>
-    ${lista(d.receber_hoje, (x) => `<li><span>Nº ${esc(x.numero)} · ${esc(x.cliente)}</span><b>${brl(x.valor)}</b></li>`, 'Nenhum recebimento vence hoje.')}${rodape(d.receber_atrasado, d.receber_7d)}</a>`);
-  if (d.pagar_hoje) jan.push(`<a class="janela pagar" href="#/financeiro/despesas"><h3>🧾 Vencem hoje · a pagar</h3>
-    <div class="valor">${brl(soma(d.pagar_hoje))}<small>${d.pagar_hoje.length} ${d.pagar_hoje.length === 1 ? 'conta' : 'contas'}</small></div>
-    ${lista(d.pagar_hoje, (x) => `<li><span>${esc(x.descricao)}${x.fornecedor ? ' · ' + esc(x.fornecedor) : ''}</span><b>${brl(x.valor)}</b></li>`, 'Nenhuma conta vence hoje. 🎉')}${rodape(d.pagar_atrasado, d.pagar_7d, true)}</a>`);
-  if (d.validade) {
+  if (d.receber_hoje && (d.receber_hoje.length || d.receber_atrasado?.n))
+    jan.push(janela('receber', '💰 Vencem hoje · a receber', `<div class="valor">${brl(soma(d.receber_hoje))}<small>${d.receber_hoje.length} ${d.receber_hoje.length === 1 ? 'venda' : 'vendas'} vencendo hoje</small></div>
+      ${d.receber_hoje.length ? lista(d.receber_hoje, (x) => `<li><span>Nº ${esc(x.numero)} · ${esc(x.cliente)}</span><b>${brl(x.valor)}</b></li>`) : '<p class="tudo-ok">Nenhum recebimento vence hoje.</p>'}${rodape(d.receber_atrasado, d.receber_7d)}`, '#/financeiro/receber', 'Ver a receber'));
+  if (d.pagar_hoje && (d.pagar_hoje.length || d.pagar_atrasado?.n))
+    jan.push(janela('pagar', '🧾 Vencem hoje · a pagar', `<div class="valor">${brl(soma(d.pagar_hoje))}<small>${d.pagar_hoje.length} ${d.pagar_hoje.length === 1 ? 'conta vencendo' : 'contas vencendo'} hoje</small></div>
+      ${d.pagar_hoje.length ? lista(d.pagar_hoje, (x) => `<li><span>${esc(x.descricao)}${x.fornecedor ? ' · ' + esc(x.fornecedor) : ''}</span><b>${brl(x.valor)}</b></li>`) : '<p class="tudo-ok">Nenhuma conta vence hoje.</p>'}${rodape(d.pagar_atrasado, d.pagar_7d, true)}`, '#/financeiro/despesas', 'Ver despesas'));
+  if (d.validade && d.validade.length) {
     const vn = d.validade_n || {};
-    jan.push(`<a class="janela validade" ${ehAdmin() ? 'href="#/produtos/validade"' : ''}><h3>⏳ Produtos próximos do vencimento</h3>
-    <div class="chips-validade"><span class="v1">${vn.vencidos || 0} vencidos</span><span class="v2">${vn.em30 || 0} em até 30 dias</span><span class="v3">${vn.em60 || 0} em 31 a 60 dias</span></div>
-    ${lista(d.validade, (x) => `<li><span>${dataBR(x.validade)} · ${esc(x.produto)}${x.lote ? ' <small>lote ' + esc(x.lote) + '</small>' : ''}</span><b class="${x.dias < 0 ? 'ruim' : x.dias <= 30 ? 'atencao' : ''}">${x.dias < 0 ? 'venceu' : x.dias === 0 ? 'hoje' : 'em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias')}</b></li>`, 'Nenhum lote com estoque vence nos próximos 60 dias. 🎉', 6)}</a>`);
+    jan.push(janela('validade', '⏳ Produtos próximos do vencimento', `<div class="chips-validade"><span class="v1">${vn.vencidos || 0} vencidos</span><span class="v2">${vn.em30 || 0} em até 30 dias</span><span class="v3">${vn.em60 || 0} em 31 a 60 dias</span></div>
+      ${lista(d.validade, (x) => `<li><span>${dataBR(x.validade)} · ${esc(x.produto)}${x.lote ? ' <small>lote ' + esc(x.lote) + '</small>' : ''}</span><b class="${x.dias < 0 ? 'ruim' : x.dias <= 30 ? 'atencao' : ''}">${x.dias < 0 ? 'venceu' : x.dias === 0 ? 'hoje' : 'em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias')}</b></li>`, 6)}`, ehAdmin() ? '#/produtos/validade' : '', 'Ver todos'));
   }
-  if (d.vendas_hoje || d.estoque_baixo != null) jan.push(`<div class="janela hoje"><h3>📈 Resumo de hoje</h3>
-    ${d.vendas_hoje ? `<a class="linha-resumo" href="#/vendas/lista"><span>Vendas confirmadas hoje</span><b>${d.vendas_hoje.n} · ${brl(d.vendas_hoje.valor)}</b></a>` : ''}
-    ${d.estoque_baixo != null ? `<a class="linha-resumo" href="#/produtos/estoque"><span>Produtos com estoque baixo (até 5)</span><b>${d.estoque_baixo}</b></a>` : ''}
-    ${pode('orcamentos') ? '<a class="linha-resumo" href="#/orcamento/novo"><span>＋ Novo orçamento</span><b>→</b></a>' : ''}</div>`);
-  $('#painel').innerHTML = jan.join('');
+  if (!jan.length) jan.push(janela('receber', '✅ Tudo em dia', '<p class="tudo-ok" style="margin:4px 0 0">Nada vence hoje, nada atrasado e nenhum produto perto do vencimento. Bom trabalho!</p>'));
+  const f = document.createElement('div'); f.className = 'fundo-avisos';
+  f.innerHTML = `<div class="avisos"><div class="avisos-topo"><b>Avisos do dia · ${dataBR(hoje())}</b><button class="btn" id="fecharAvisos">Fechar todos</button></div><div class="avisos-lista">${jan.join('')}</div></div>`;
+  document.body.appendChild(f);
+  const fechar = () => f.remove();
+  $('#fecharAvisos', f).onclick = fechar;
+  f.onclick = (e) => { if (e.target === f) fechar(); };
+  $$('.fechar-janela', f).forEach((b) => (b.onclick = () => { b.closest('.janela').remove(); if (!$('.janela', f)) fechar(); }));
+  $$('.ver-mais', f).forEach((a) => a.addEventListener('click', fechar));
+  window.addEventListener('hashchange', fechar, { once: true });
 }
 
 // ---------- produtos ----------
