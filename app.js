@@ -859,6 +859,18 @@ async function telaNotas(modo) {
     await comChave({ nota: { ...d, source: 'manual', total: 0 }, itens: [], parcelas: [] });
   };
 }
+// Sugestões do estoque para um item da nota: separa as palavras importantes da descrição (tira "de", "cx", "c/"…),
+// busca produtos que tenham qualquer uma delas e ordena pelos que têm mais palavras em comum (tamanho como "5l" vale mais).
+const PALAVRAS_FRACAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'c', 'com', 'cx', 'caixa', 'un', 'und', 'unid', 'pct', 'pc', 'fd', 'fardo', 'emb', 'para', 'p', 'tipo', 'novo', 'nova', 'item', 'teste']);
+async function sugerirProdutos(desc) {
+  const palavras = [...new Set(semAcento(desc).replace(/[^a-z0-9,]+/g, ' ').split(' ').map((w) => w.replace(/,/g, '')).filter((w) => w.length >= 2 && !PALAVRAS_FRACAS.has(w)))].slice(0, 8);
+  if (!palavras.length) return [];
+  const ps = await ok(sb.from('products').select('id,code,description,brand,unit,stock,price,cost,busca').or(palavras.map((w) => `busca.ilike.%${w}%`).join(',')).limit(80));
+  const medida = (w) => /\d/.test(w);
+  const pont = ps.map((p) => ({ p, s: palavras.reduce((s, w) => s + (p.busca.includes(w) ? (medida(w) ? 2 : 1) : 0), 0) }));
+  const minimo = palavras.length >= 2 ? 2 : 1;
+  return pont.filter((x) => x.s >= minimo).sort((a, b) => b.s - a.s || a.p.price - b.p.price).slice(0, 5).map((x) => x.p);
+}
 // Revisão antes de dar entrada: liga cada item a um produto, define o fator (ex.: CX com 12 = 12) e as parcelas do contas a pagar.
 async function revisarNota(dados) {
   const n = dados.nota, itens = dados.itens, parcelas = dados.parcelas;
@@ -874,6 +886,7 @@ async function revisarNota(dados) {
     if (!pid && it.ean) { const p = await ok(sb.from('products').select('id').eq('ean', it.ean).limit(1)); if (p[0]) pid = p[0].id; }
     it.factor = fator; it.acao = pid ? 'ligar' : 'escolher';
     if (pid) it.produto = (await ok(sb.from('products').select('id,code,description,brand,unit,stock,price').eq('id', pid).single()));
+    else { it.sugestoes = await sugerirProdutos(it.description); if (!it.sugestoes.length) it.acao = 'novo'; }
   }
   const fonte = { xml: 'XML', pdf: 'PDF', foto: 'foto', manual: 'chave digitada' }[n.source] || n.source;
   $('#rev').innerHTML = `<div class="card"><h2 style="margin-top:0">Conferir nota antes de dar entrada <small style="color:var(--muted);font-weight:400">(lida do ${fonte})</small></h2>
@@ -900,7 +913,9 @@ async function revisarNota(dados) {
         <div style="flex:2 1 240px"><label>Produto no seu estoque</label>
           <select data-c="acao"><option value="ligar" ${it.acao === 'ligar' ? 'selected' : ''} ${it.produto ? '' : 'disabled'}>${it.produto ? esc(it.produto.code + ' · ' + it.produto.description) : '(nenhum ligado)'}</option><option value="escolher" ${it.acao === 'escolher' ? 'selected' : ''}>Procurar produto…</option><option value="novo" ${it.acao === 'novo' ? 'selected' : ''}>Cadastrar como produto novo</option><option value="ignorar" ${it.acao === 'ignorar' ? 'selected' : ''}>Não dar entrada neste item</option></select></div>
       </div>
-      ${it.acao === 'escolher' ? `<div style="position:relative"><input class="buscaProd" placeholder="Palavras-chave do seu produto" value="${esc(it.busca || '')}"><div class="sugProd"></div></div>` : ''}
+      ${it.acao === 'escolher' && it.sugestoes?.length ? `<div class="sug-estoque"><small><b>Parecidos no seu estoque</b> (clique no certo):</small>${it.sugestoes.map((p, j) => `<button type="button" class="chip ${j === 0 ? 'melhor' : ''}" data-sug="${j}">${esc(p.code)} · ${esc(p.description)}${p.brand ? ' · ' + esc(p.brand) : ''} <small>(estoque ${p.stock})</small></button>`).join('')}</div>` : ''}
+      ${it.acao === 'novo' && !it.produto && it.sugestoes && !it.sugestoes.length ? '<p class="dica">Nenhum produto parecido no seu estoque: provavelmente é <b>produto novo</b>. Confira a descrição e o preço abaixo.</p>' : ''}
+      ${it.acao === 'escolher' ? `<div style="position:relative"><input class="buscaProd" placeholder="${it.sugestoes?.length ? 'Não é nenhum destes? Busque por palavras-chave' : 'Palavras-chave do seu produto'}" value="${esc(it.busca || '')}"><div class="sugProd"></div></div>` : ''}
       ${it.acao === 'novo' ? `<div class="linha"><div style="flex:2 1 240px"><label>Descrição do produto novo</label><input data-c="novoDesc" value="${esc(it.novoDesc ?? it.description)}"></div><div><label>Marca</label><input data-c="novoMarca" value="${esc(it.novoMarca || '')}"></div><div style="flex:0 1 140px"><label>Preço de venda (R$)</label><input data-c="novoPreco" inputmode="decimal" value="${String(it.novoPreco ?? (Math.round((it.unit_cost / (it.factor || 1)) * 1.4 * 100) / 100)).replace('.', ',')}"></div></div>` : ''}
       <small style="color:var(--muted)">Entra no estoque: <b>${(num(String(it.quantity).replace('.', ',')) * (it.factor || 1)).toLocaleString('pt-BR')}</b> ${it.acao === 'ignorar' ? '(ignorado)' : ''} · custo por unidade de estoque: <b>${brl(it.unit_cost / (it.factor || 1))}</b></small>
       <button class="btn perigo" data-x="${k}" style="float:right;padding:4px 10px">✕</button></div>`).join('') : '<p class="vazio">Nenhum item ainda. Use “Adicionar item” abaixo.</p>';
@@ -911,6 +926,7 @@ async function revisarNota(dados) {
       desenharItens();
     }));
     $$('#itens [data-x]').forEach((b) => (b.onclick = () => { itens.splice(b.dataset.x, 1); desenharItens(); }));
+    $$('#itens [data-sug]').forEach((b) => (b.onclick = () => { const it = itens[b.closest('[data-k]').dataset.k]; it.produto = it.sugestoes[b.dataset.sug]; it.acao = 'ligar'; desenharItens(); }));
     $$('#itens .buscaProd').forEach((inp) => {
       let t; inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
         const it = itens[inp.closest('[data-k]').dataset.k]; it.busca = inp.value; const box = inp.nextElementSibling;

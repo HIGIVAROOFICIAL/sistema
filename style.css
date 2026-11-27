@@ -95,3 +95,11 @@ tr.clica:hover td{background:#f7fafd}
 /* Itens da nota de entrada na tela de revisão */
 .item-nota{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;background:#fbfcfe;overflow:hidden}
 .item-nota label{margin-top:4px}
+/* Sugestões do estoque na entrada de nota */
+.sug-estoque{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
+.sug-estoque small{flex-basis:100%;color:var(--muted)}
+.chip{border:1.5px solid #c9d5e3;background:#fff;border-radius:99px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;color:var(--ink);text-align:left}
+.chip:hover{border-color:var(--azul);background:#f3f8fe}
+.chip.melhor{border-color:var(--green);background:#f1fae9}
+.chip small{color:var(--muted)}
+.dica{background:#fff8e6;border:1px solid #f3dca3;color:#7a5a00;border-radius:10px;padding:8px 12px;margin:8px 0;font-size:13.5px}
