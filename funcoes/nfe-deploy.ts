@@ -194,6 +194,22 @@ async function usuario(req: Request) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
+    // DIAGNÓSTICO TEMPORÁRIO (não usa o certificado da empresa): cria um certificado descartável e testa se o servidor
+    // envia certificado de cliente para um site público de teste. Remover depois do teste.
+    if (new URL(req.url).searchParams.get("diag") === "mtls") {
+      const kp = forge.pki.rsa.generateKeyPair(2048); const c = forge.pki.createCertificate();
+      c.publicKey = kp.publicKey; c.serialNumber = "01"; c.validity.notBefore = new Date(Date.now() - 864e5); c.validity.notAfter = new Date(Date.now() + 864e5);
+      const nome = [{ name: "commonName", value: "teste-descartavel-higivaro" }]; c.setSubject(nome); c.setIssuer(nome); c.sign(kp.privateKey, forge.md.sha256.create());
+      const certPem = forge.pki.certificateToPem(c), keyPem = forge.pki.privateKeyInfoToPem(forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey)));
+      const out: Record<string, unknown> = {};
+      const variantes: Record<string, unknown> = { "cert+key": { cert: certPem, key: keyPem }, "certChain+privateKey": { certChain: certPem, privateKey: keyPem } };
+      for (const [n, op] of Object.entries(variantes)) {
+        // deno-lint-ignore no-explicit-any
+        try { const cli = (Deno as any).createHttpClient({ ...(op as object), http2: false, http1: true }); const r = await fetch("https://certauth.cryptomix.com/json/", { client: cli } as any); const j = await r.json(); out[n] = { verify: j.SSL_CLIENT_VERIFY, dn: j.SSL_CLIENT_S_DN }; }
+        catch (e) { out[n] = "erro: " + String((e as Error).message).slice(0, 200); }
+      }
+      return resp({ ok: true, diag: out });
+    }
     const quem = await usuario(req);
     if (!quem) return resp({ ok: false, erro: "sem permissão para NF-e (entre no sistema com um usuário que tenha \"Emitir NF-e\")" }, 403);
     const p = await req.json().catch(() => ({}));
