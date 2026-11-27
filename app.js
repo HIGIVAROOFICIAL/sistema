@@ -1307,6 +1307,12 @@ function dadosDaChave(ch) {
   return { access_key: ch, supplier_cnpj: formatarDoc(ch.slice(6, 20)), series: String(Number(ch.slice(22, 25))), number: String(Number(ch.slice(25, 34))) };
 }
 // XML da NF-e (procNFe ou NFe): fornecedor, número, data, itens, total e parcelas.
+// XML pode vir em UTF-8 ou ISO-8859-1 (acentos): usa a codificação que o próprio arquivo declara.
+async function lerTextoXml(f) {
+  const buf = await f.arrayBuffer(); const ini = new TextDecoder('latin1').decode(buf.slice(0, 200));
+  const cod = ((ini.match(/encoding=["']([\w-]+)/i) || [])[1] || 'utf-8').toLowerCase();
+  try { return new TextDecoder(cod).decode(buf); } catch { return new TextDecoder('utf-8').decode(buf); }
+}
 function lerXmlNfe(texto) {
   const doc = new DOMParser().parseFromString(texto, 'text/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('arquivo não é um XML válido');
@@ -1379,21 +1385,86 @@ async function conferirNota(d) {
   return r;
 }
 // PDF do DANFE: lê o texto e procura a chave, o fornecedor ("Recebemos de ..."), a data e o valor total. Os itens são conferidos na revisão.
+// DANFE em PDF: lê o texto com a posição de cada pedaço, remonta as linhas e tira chave, emissão, total, parcelas e itens.
+// Funciona com PDF gerado pelo sistema emissor (com texto). PDF escaneado (imagem) não tem texto: aí só pela foto/chave.
+const numBR = (s) => { s = String(s || '').trim(); if (!s) return 0; return s.includes(',') ? Number(s.replace(/\./g, '').replace(',', '.')) || 0 : Number(s) || 0; };
 async function lerPdfDanfe(arq) {
   await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await arq.arrayBuffer()) }).promise;
-  let texto = '';
-  for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) texto += (await (await pdf.getPage(p)).getTextContent()).items.map((i) => i.str).join(' ') + '\n';
-  const t = texto.replace(/\s+/g, ' ');
-  const chave = (t.match(/(?:\d{4}\s?){10}\d{4}/g) || []).map(soDig).find((c) => c.length === 44) || '';
-  const base = dadosDaChave(chave) || {};
-  const nome = (t.match(/RECEBEMOS DE (.+?) OS PRODUTOS/i) || [])[1] || '';
-  const data = (t.match(/DATA DA EMISS[ÃA]O\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || t.match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || '';
-  const total = (t.match(/VALOR TOTAL DA NOTA\s*:?\s*R?\$?\s*([\d.]+,\d{2})/i) || [])[1] || '';
-  return { nota: { ...base, supplier_name: nome.trim(), issue_date: data ? data.split('/').reverse().join('-') : '', total: total ? num(total) : 0, source: 'pdf' }, itens: [], parcelas: [], texto: !!t.trim() };
+  return lerTextoDanfe(await pedacosDoPdf(pdf));
 }
-// Foto da nota: lê o código de barras da chave (Code-128) com o leitor do navegador ou com a ZXing.
+async function pedacosDoPdf(pdf) {
+  const pedacos = []; // { pg, x, y, s, w }
+  for (let p = 1; p <= Math.min(pdf.numPages, 6); p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    tc.items.forEach((i) => { const s = String(i.str || '').trim(); if (s) pedacos.push({ pg: p, x: i.transform[4], y: i.transform[5], s, w: i.width || 0 }); });
+  }
+  return pedacos;
+}
+function lerTextoDanfe(pedacos) {
+  // Linhas: mesma página e mesma altura (tolerância de 2,5 pt), da esquerda para a direita.
+  const linhas = [];
+  pedacos.slice().sort((a, b) => a.pg - b.pg || b.y - a.y || a.x - b.x).forEach((q) => {
+    const l = linhas.find((l) => l.pg === q.pg && Math.abs(l.y - q.y) <= 2.5);
+    if (l) l.ps.push(q); else linhas.push({ pg: q.pg, y: q.y, ps: [q] });
+  });
+  linhas.forEach((l) => { l.ps.sort((a, b) => a.x - b.x); l.t = l.ps.map((q) => q.s).join(' ').replace(/\s+/g, ' ').trim(); });
+  const texto = linhas.map((l) => l.t).join('\n'), plano = texto.replace(/\s+/g, ' ');
+  // Valor logo abaixo de um rótulo (o DANFE põe o rótulo em cima e o valor embaixo, na mesma coluna).
+  const abaixo = (rot, padrao) => {
+    for (const r of pedacos.filter((q) => rot.test(q.s))) {
+      const mesma = r.s.replace(rot, '').match(padrao); if (mesma) return mesma[0];
+      const cands = pedacos.filter((q) => q.pg === r.pg && q.y < r.y - 1 && r.y - q.y < 22 && q.x > r.x - 40 && q.x < r.x + Math.max(r.w, 60) + 40 && padrao.test(q.s))
+        .sort((a, b) => (r.y - a.y) - (r.y - b.y) || Math.abs(a.x - r.x) - Math.abs(b.x - r.x));
+      if (cands[0]) return cands[0].s.match(padrao)[0];
+    }
+    return '';
+  };
+  const chaves = (plano.match(/(?:\d{4}\s?){10}\d{4}/g) || []).map(soDig).filter((c) => c.length === 44);
+  const chave = chaves.find(chaveValida) || chaves[0] || '';
+  const base = dadosDaChave(chave) || {};
+  const nome = ((plano.match(/RECEBEMOS DE (.+?) OS PRODUTOS/i) || [])[1] || '').trim();
+  const dinheiro = /[\d.]*\d,\d{2}/;
+  const data = abaixo(/DATA D[AE] EMISS[ÃA]O/i, /\d{2}\/\d{2}\/\d{4}/) || (plano.match(/EMISS[ÃA]O\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || [])[1] || '';
+  const total = abaixo(/VALOR TOTAL DA NOTA|V\. ?TOTAL DA NOTA/i, dinheiro) || (plano.match(/VALOR TOTAL DA NOTA\s*:?\s*R?\$?\s*([\d.]+,\d{2})/i) || [])[1] || '';
+  const totalProd = abaixo(/VALOR TOTAL DOS PRODUTOS|V\. ?TOTAL PRODUTOS/i, dinheiro);
+  const frete = abaixo(/VALOR DO FRETE/i, dinheiro), ipi = abaixo(/VALOR (TOTAL )?DO IPI/i, dinheiro), st = abaixo(/VALOR DO ICMS (SUBST|ST)/i, dinheiro);
+  // Parcelas (FATURA / DUPLICATAS): pares "vencimento + valor".
+  const iFat = texto.search(/FATURA|DUPLICATA/i), iCalc = texto.search(/C[ÁA]LCULO DO IMPOSTO/i);
+  const trechoFat = iFat >= 0 ? texto.slice(iFat, iCalc > iFat ? iCalc : iFat + 800) : '';
+  const parcelas = [...trechoFat.matchAll(/(\d{2}\/\d{2}\/\d{4})\D{0,25}?([\d.]*\d,\d{2})/g)].map((m) => ({ due_date: m[1].split('/').reverse().join('-'), amount: numBR(m[2]) })).filter((p) => p.amount > 0);
+  // Itens: linhas do quadro "DADOS DO(S) PRODUTO(S)" com NCM (8 números), CST/CSOSN, CFOP, unidade, quantidade, valor unitário e total.
+  const reItem = /^(\S+)\s+(.+?)\s+(\d{8}|\d{4}\.\d{2}\.\d{2})\s+(?:\d\/?\d{2,3}\s+|\d{3,4}\s+)?([1-7]\d{3})\s+([A-Za-zÀ-ú]{1,6}\.?)\s+([\d.]*\d(?:,\d{1,4})?)\s+([\d.]*\d,\d{2,10})\s+([\d.]*\d,\d{2})/;
+  const fim = /DADOS ADICIONAIS|C[ÁA]LCULO DO ISSQN|INFORMA[ÇC][ÕO]ES COMPLEMENTARES|RESERVADO AO FISCO/i;
+  const cabecalho = /C[ÓO]D(IGO)?\.? ?PROD|DESCRI[ÇC][ÃA]O DO PRODUTO|NCM\/?SH|CFOP|QUANT|V\. ?UNIT|VALOR UNIT/i;
+  const itens = []; let dentro = false; // o quadro de produtos pode continuar nas páginas seguintes
+  linhas.forEach((l, k) => {
+    const t = l.t;
+    if (/DADOS D[OE]S? PRODUTOS?/i.test(t)) { dentro = true; return; }
+    if (!dentro) return;
+    if (fim.test(t)) { dentro = false; return; }
+    const m = t.match(reItem);
+    if (!m && cabecalho.test(t)) return;
+    if (m) {
+      const q = numBR(m[6]), vu = numBR(m[7]), vt = numBR(m[8]);
+      itens.push({ supplier_code: m[1], ean: '', description: m[2].trim(), unit: m[5].replace('.', '').toUpperCase(), quantity: q, unit_cost: q ? Math.round((vt / q) * 10000) / 10000 : vu, vProd: vt, lot: '', expiry: '', xmlFrete: null, xmlImposto: null });
+    } else if (itens.length && l.pg === linhas[k - 1].pg && !/^[\d.,\s%]+$/.test(t) && t.length < 140) itens[itens.length - 1].description += ' ' + t; // descrição que quebrou de linha
+  });
+  // Lote e validade escritos na descrição (ex.: "LOTE: AS2611 VAL: 30/05/2027").
+  itens.forEach((it) => {
+    const d = it.description;
+    const lote = (d.match(/\bLOTE?\s*[:.\-]?\s*([A-Z0-9][A-Z0-9\-\/]{1,20})/i) || [])[1];
+    const val = (d.match(/\b(?:VAL(?:IDADE)?|VENC(?:IMENTO)?|DT\.? ?VAL)\s*[:.\-]?\s*(\d{2}\/\d{2}\/\d{2,4})/i) || [])[1];
+    if (lote) it.lot = lote.toUpperCase();
+    if (val) { const [dd, mm, aa] = val.split('/'); it.expiry = `${aa.length === 2 ? '20' + aa : aa}-${mm}-${dd}`; }
+    it.description = d.replace(/\s+/g, ' ').trim().toUpperCase();
+  });
+  // Frete, IPI e ST da nota inteira rateados pelo valor dos produtos (vira % em cada item).
+  const vp = numBR(totalProd) || itens.reduce((s, i) => s + i.vProd, 0);
+  if (vp) { const pf = numBR(frete) / vp * 100, pi = (numBR(ipi) + numBR(st)) / vp * 100; itens.forEach((i) => { if (pf) i.xmlFrete = Math.round(pf * 100) / 100; if (pi) i.xmlImposto = Math.round(pi * 100) / 100; }); }
+  return { nota: { ...base, supplier_name: nome, issue_date: data ? data.split('/').reverse().join('-') : '', total: numBR(total), source: 'pdf' }, itens, parcelas, texto: !!plano.trim() };
+}
 async function lerFotoDanfe(arq) {
   const url = URL.createObjectURL(arq);
   try {
@@ -1420,7 +1491,7 @@ async function telaNotas(modo) {
       <label class="btn azul grande" style="margin:0">📂 Escolher arquivo XML<input type="file" id="arq" accept=".xml,text/xml,application/xml" hidden></label></div><div id="rev"></div>`;
     $('#arq').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
-      try { revisarNota(lerXmlNfe(await f.text())); } catch (err) { falhou(err); }
+      try { revisarNota(lerXmlNfe(await lerTextoXml(f))); } catch (err) { falhou(err); }
     };
     return;
   }
@@ -1438,7 +1509,7 @@ async function telaNotas(modo) {
   };
   $('#pdf').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return; $('#pst').textContent = 'Lendo o PDF…';
-    try { const d = await lerPdfDanfe(f); $('#pst').textContent = d.nota.access_key ? 'Chave encontrada: ' + d.nota.access_key : (d.texto ? 'Não achei a chave no PDF. Digite a chave abaixo ou continue preenchendo à mão.' : 'Este PDF é uma imagem escaneada; use "Foto da nota" ou digite a chave.'); await comChave(d); } catch (err) { falhou(err); }
+    try { const d = await lerPdfDanfe(f); $('#pst').textContent = !d.texto ? 'Este PDF é uma imagem escaneada (sem texto): use "Foto da nota", digite a chave ou, melhor, peça o XML ao fornecedor.' : (d.nota.access_key ? 'Chave encontrada: ' + d.nota.access_key : 'Não achei a chave no PDF.') + ' · ' + (d.itens.length ? d.itens.length + (d.itens.length === 1 ? ' item lido' : ' itens lidos') + ' do PDF. Confira tudo abaixo.' : 'Não consegui ler os itens deste PDF: lance os itens abaixo (ou use o XML).'); await comChave(d); } catch (err) { falhou(err); }
   };
   $('#foto').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return; $('#pst').textContent = 'Lendo o código de barras da foto…';
