@@ -170,3 +170,5 @@ a.janela[href]:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(3,35,
 .fechar-janela:hover{color:var(--red);border-color:var(--red)}
 .avisos .janela h3{padding-right:36px}
 .ver-mais{display:inline-block;margin-top:10px;font-weight:700;color:var(--azul);text-decoration:none}
+/* 27/11: destaque do item recém-adicionado no orçamento */
+tr.item-novo td{background:#e9f7dd!important;transition:background .4s}

@@ -269,7 +269,7 @@ sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') telaTrocarSe
 async function telaInicio() {
   app.innerHTML = `<div class="inicio-logo"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>`;
   // Avisos do dia: abrem toda vez que o usuário entra no sistema (login ou abrir o sistema); não repetem ao só voltar ao Início.
-  if (S.avisosPendentes !== false) { S.avisosPendentes = false; mostrarAvisos(); }
+  if (S.avisosPendentes === true) { S.avisosPendentes = false; mostrarAvisos(); } // só logo depois de fazer o login
 }
 // Janelas de aviso sobre a tela (cada uma com ✕): vencimentos de hoje a receber / a pagar e produtos perto da validade.
 async function mostrarAvisos() {
@@ -813,7 +813,10 @@ async function telaEditorOrcamento(id, codCliente) {
         const p = ps.find((x) => x.id === d.dataset.id);
         const ja = itens.find((i) => i.product_id === p.id);
         if (ja) ja.quantity += 1; else itens.push({ product_id: p.id, code: p.code, description: p.description, brand: p.brand, unit: p.unit, quantity: 1, unit_price: precoTab(p) });
-        $('#bp').value = ''; $('#sug').innerHTML = ''; desenhar(); $('#bp').focus();
+        $('#bp').value = ''; $('#sug').innerHTML = ''; desenhar();
+        // A tela acompanha o item adicionado: rola até ele, destaca a linha e deixa a quantidade pronta para digitar.
+        const k = itens.indexOf(ja || itens[itens.length - 1]), q = $(`#carrinho input[data-n="${k}"][data-c="quantity"]`);
+        if (q) { const tr = q.closest('tr'); tr.classList.add('item-novo'); setTimeout(() => tr.classList.remove('item-novo'), 1800); tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => { q.focus(); q.select(); }, 350); }
       }));
     }, 250);
   };
@@ -1869,11 +1872,23 @@ async function detalheNFe(n, depois) {
     <table style="font-size:14px">${linha('Cliente', (n.cliente || '') + (n.cliente_doc ? ' · ' + n.cliente_doc : ''))}${linha('Valor', brl(n.valor))}${linha('Série', String(n.serie ?? ''))}${linha('Chave', n.chave)}${linha('Protocolo', n.protocolo)}${linha('SEFAZ', (n.cstat || '') + ' ' + (n.motivo || ''))}
     ${linha('Emitida por', n.emitida_por)}${linha('Emitida em', new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }))}${linha('Aparelho', n.dispositivo)}
     ${n.status === 'cancelada' ? linha('Cancelada por', n.cancelada_por) + linha('Cancelada em', new Date(n.cancelada_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' })) + linha('Motivo', n.motivo_cancelamento) + linha('Protocolo do cancelamento', n.protocolo_cancelamento) : ''}</table>
-    <div class="acoes">${n.status !== 'rejeitada' ? '<button type="button" class="btn azul" id="dDanfe">📄 DANFE (PDF)</button>' : ''}<button type="button" class="btn" id="dXml">⬇️ Baixar XML</button>${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
+    <div class="acoes">${n.status !== 'rejeitada' ? '<button type="button" class="btn azul" id="dDanfe">📄 DANFE (PDF)</button>' : ''}<button type="button" class="btn" id="dXml">⬇️ Baixar XML</button>${n.chave && n.status !== 'rejeitada' ? '<button type="button" class="btn" id="dConsultar">🔎 Consultar na SEFAZ</button>' : ''}${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
+    <p id="dSefaz" class="dica" hidden></p>
     ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
     'Fechar', null, () => {
       $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('#dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
       if ($('#dDanfe')) $('#dDanfe').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml').eq('id', n.id).single()); await danfePDF(x.xml); } catch (e) { falhou(e); } };
+      // Consulta a situação oficial da nota na SEFAZ-BA (pelo programa do PC) e mostra o link do portal nacional.
+      if ($('#dConsultar')) $('#dConsultar').onclick = async (ev) => {
+        const b = ev.target, p = $('#dSefaz'); b.disabled = true; p.hidden = false; p.textContent = 'Consultando a SEFAZ-BA…';
+        const portal = `https://${n.ambiente === '1' ? 'www' : 'hom'}.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g=`;
+        try {
+          const r = await assinadorNFe('/nfe/consultar', { amb: n.ambiente, chave: n.chave });
+          const st = String(r.protCStat || r.cStat), nomes = { '100': '✅ AUTORIZADA (a nota está válida na SEFAZ)', '101': '❌ CANCELADA na SEFAZ', '135': '❌ CANCELADA na SEFAZ', '110': '⛔ DENEGADA', '301': '⛔ DENEGADA', '217': '⚠️ NÃO ENCONTRADA na SEFAZ' };
+          p.innerHTML = `<b>${nomes[st] || esc(st)}</b><br>SEFAZ: ${esc(r.cStat)} – ${esc(r.xMotivo)}${r.protocolo ? '<br>Protocolo: ' + esc(r.protocolo) : ''}<br><small>Consulta feita agora, direto na SEFAZ-BA${n.ambiente === '2' ? ' (ambiente de teste)' : ''}. Também dá para conferir no <a href="${portal}" target="_blank" rel="noopener">portal nacional da NF-e</a> com a chave.</small>`;
+        } catch (e) { p.innerHTML = '❌ ' + esc(e.message) + `<br><small>Você pode conferir no <a href="${portal}" target="_blank" rel="noopener">portal nacional da NF-e</a> com a chave.</small>`; }
+        b.disabled = false;
+      };
       $('#dXml').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml,xml_cancelamento,chave').eq('id', n.id).single()); if (!x.xml) return aviso('Esta nota não tem XML guardado.', true); baixarArquivo(`NFe${x.chave}.xml`, x.xml); if (x.xml_cancelamento) baixarArquivo(`NFe${x.chave}-cancelamento.xml`, x.xml_cancelamento); } catch (e) { falhou(e); } };
       if ($('#dCancelar')) $('#dCancelar').onclick = () => { $('.fundo-dialogo:last-child').remove(); cancelarNFe(n, depois); };
     });
