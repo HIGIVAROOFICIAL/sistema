@@ -18,25 +18,37 @@ const adm = () => createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPA
 // ---------- certificado (lido do cofre uma vez por instância) ----------
 type Cert = { certPem: string; keyPem: string; certB64: string; chave: CryptoKey; titular: string; validade: string; cliente: Deno.HttpClient };
 let CERT: Cert | null = null;
-async function certificado(): Promise<Cert> {
-  if (CERT) return CERT;
-  const b64 = Deno.env.get("NFE_PFX_B64"), senha = Deno.env.get("NFE_PFX_SENHA");
-  if (!b64 || !senha) throw new Error("o certificado ainda não foi cadastrado no cofre (segredos NFE_PFX_B64 e NFE_PFX_SENHA)");
-  // Diagnóstico sem expor nada do certificado: tamanho do texto, se é base64 de um arquivo .pfx e o motivo da falha.
-  const limpo = b64.replace(/\s+/g, "");
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(limpo)) throw new Error(`o segredo NFE_PFX_B64 não é o arquivo em texto (base64): tem ${limpo.length} caracteres e caracteres inválidos. Refaça o passo do PowerShell e cole de novo.`);
+// Abre o .pfx (base64 + senha) e confere se é o certificado da HIGIVARO, válido. Mensagens não expõem nada do certificado.
+function abrirPfx(b64: string, senha: string) {
+  const limpo = String(b64 || "").replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(limpo)) throw new Error("o arquivo enviado não é um certificado .pfx válido");
   const der = forge.util.decode64(limpo);
-  if (der.length < 1000 || der.charCodeAt(0) !== 0x30) throw new Error(`o segredo NFE_PFX_B64 não parece um arquivo .pfx (tem ${der.length} bytes). Confira se o comando do PowerShell achou o arquivo certo.`);
+  if (der.length < 1000 || der.charCodeAt(0) !== 0x30) throw new Error(`o arquivo não parece um certificado .pfx (${der.length} bytes)`);
   let asn;
-  try { asn = forge.asn1.fromDer(der); } catch { throw new Error(`o arquivo do cofre está incompleto ou corrompido (${der.length} bytes). Copie e cole de novo.`); }
+  try { asn = forge.asn1.fromDer(der); } catch { throw new Error("o arquivo do certificado está incompleto ou corrompido"); }
   let p12;
   try { p12 = forge.pkcs12.pkcs12FromAsn1(asn, false, senha); }
   catch (e) {
     const m = String((e as Error)?.message || e);
-    if (/MAC could not be verified|Invalid password/i.test(m)) throw new Error("a senha NFE_PFX_SENHA não confere com o arquivo .pfx. Confira a senha (maiúsculas, minúsculas e espaços).");
-    if (/Unsupported OID|PBE|cipher|algorithm/i.test(m)) throw new Error("o arquivo .pfx foi exportado com uma criptografia que o servidor não abre (AES256). Exporte de novo escolhendo a criptografia TripleDES-SHA1. Detalhe: " + m.slice(0, 120));
+    if (/MAC could not be verified|Invalid password/i.test(m)) throw new Error("a senha não confere com o certificado. Confira maiúsculas, minúsculas e espaços.");
+    if (/Unsupported OID|PBE|cipher|algorithm/i.test(m)) throw new Error("o certificado foi exportado com uma criptografia que o servidor não abre (AES256). Exporte de novo escolhendo a criptografia TripleDES-SHA1. Detalhe: " + m.slice(0, 120));
     throw new Error("não consegui abrir o certificado. Detalhe técnico: " + m.slice(0, 160));
   }
+  return { p12, limpo };
+}
+// Lê do cofre do banco (Supabase Vault); se não houver, dos segredos da função (forma antiga).
+async function lerCofre() {
+  const { data } = await adm().rpc("nfe_ler_certificado");
+  const r = Array.isArray(data) ? data[0] : data;
+  if (r?.pfx && r?.senha) return { b64: r.pfx as string, senha: r.senha as string };
+  const b64 = Deno.env.get("NFE_PFX_B64"), senha = Deno.env.get("NFE_PFX_SENHA");
+  if (b64 && senha && b64.length > 1000) return { b64, senha };
+  throw new Error("o certificado ainda não foi guardado no cofre. Use o botão \"Guardar certificado no cofre\" em Admin › NF-e.");
+}
+async function certificado(): Promise<Cert> {
+  if (CERT) return CERT;
+  const { b64, senha } = await lerCofre();
+  const { p12 } = abrirPfx(b64, senha);
   const O = forge.pki.oids;
   const chaves = [...(p12.getBags({ bagType: O.pkcs8ShroudedKeyBag })[O.pkcs8ShroudedKeyBag] || []), ...(p12.getBags({ bagType: O.keyBag })[O.keyBag] || [])];
   const certs = (p12.getBags({ bagType: O.certBag })[O.certBag] || []).map((b) => b.cert).filter(Boolean) as forge.pki.Certificate[];
@@ -108,6 +120,24 @@ Deno.serve(async (req) => {
     const p = await req.json().catch(() => ({}));
     const amb = p.amb === "1" ? "1" : "2";
     if (p.acao === "certificado") { const c = await certificado(); return resp({ ok: true, titular: c.titular, validade: c.validade }); }
+    // Guardar (ou trocar) o certificado no cofre: só administrador; abre e confere antes de gravar.
+    if (p.acao === "guardar") {
+      if (quem.role !== "admin") return resp({ ok: false, erro: "só o administrador pode guardar o certificado" }, 403);
+      const senha = String(p.senha || ""); if (!senha) throw new Error("informe a senha do certificado");
+      const { limpo, p12 } = abrirPfx(String(p.pfx || ""), senha);
+      // Confere ANTES de gravar: tem de ser da HIGIVARO, com chave privada e dentro da validade.
+      const O = forge.pki.oids;
+      const certsNovo = (p12.getBags({ bagType: O.certBag })[O.certBag] || []).map((b) => b.cert).filter(Boolean) as forge.pki.Certificate[];
+      const daEmpresa = certsNovo.find((c) => String(c.subject.getField("CN")?.value || "").includes(CNPJ));
+      if (!daEmpresa) throw new Error("este certificado não é da HIGIVARO (CNPJ 69.959.700/0001-04). Nada foi gravado.");
+      if (daEmpresa.validity.notAfter < new Date()) throw new Error("este certificado está vencido. Nada foi gravado.");
+      const temChave = (p12.getBags({ bagType: O.pkcs8ShroudedKeyBag })[O.pkcs8ShroudedKeyBag] || []).length + (p12.getBags({ bagType: O.keyBag })[O.keyBag] || []).length;
+      if (!temChave) throw new Error("o arquivo não tem a chave privada (exporte marcando \"Sim, exportar a chave privada\"). Nada foi gravado.");
+      const antes = CERT; CERT = null;
+      await (async () => { const { error } = await adm().rpc("nfe_guardar_certificado", { p_pfx: limpo, p_senha: senha }); if (error) throw new Error("não consegui gravar no cofre: " + error.message); })();
+      try { const c = await certificado(); return resp({ ok: true, titular: c.titular, validade: c.validade }); }
+      catch (e) { CERT = antes; throw e; }
+    }
     if (p.acao === "status") return resp({ ok: true, ...(await statusSefaz(amb)) });
     if (p.acao === "cadastro") return resp({ ok: true, ...(await cadastro(String(p.cnpj || CNPJ))) });
     return resp({ ok: false, erro: "ação desconhecida" }, 400);

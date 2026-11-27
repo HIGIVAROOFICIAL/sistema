@@ -1894,7 +1894,12 @@ function formNFeAdmin(e) {
   const c = e.nfe_config || {}, v = (k, pad = '') => esc(c[k] ?? pad);
   return `<div class="card"><h2 style="margin-top:0">1. Certificado digital no cofre</h2>
     <p style="color:var(--muted);margin-top:0">O certificado A1 da HIGIVARO fica guardado no cofre do servidor (Supabase), protegido pelo 2FA. Nem o navegador nem os usuários têm acesso a ele; o sistema só pede ao servidor para assinar a nota.</p>
-    <div class="acoes"><button class="btn azul" id="vCert">Verificar certificado</button></div><p id="rCert" class="dica" hidden></p></div>
+    <div class="acoes"><button class="btn azul" id="vCert">Verificar certificado</button></div><p id="rCert" class="dica" hidden></p>
+    <h3 style="margin:16px 0 4px">Guardar ou trocar o certificado</h3>
+    <p style="color:var(--muted);margin:0 0 6px;font-size:13px">Escolha o arquivo <b>.pfx</b> da HIGIVARO e digite a senha. O servidor confere se é o certificado da empresa e guarda criptografado no cofre. Use também quando renovar o certificado.</p>
+    <div class="linha"><div style="flex:2 1 260px"><label>Arquivo do certificado (.pfx)</label><input type="file" id="arqPfx" accept=".pfx,.p12,application/x-pkcs12"></div>
+      <div style="flex:1 1 200px"><label>Senha do certificado</label><input type="password" id="senhaPfx" autocomplete="new-password"></div></div>
+    <div class="acoes"><button class="btn pri" id="gCert">🔒 Guardar certificado no cofre</button></div></div>
   <div class="card"><h2 style="margin-top:0">2. Conexão com a SEFAZ-BA</h2>
     <div class="acoes"><button class="btn" id="tHom">Testar ambiente de TESTE</button><button class="btn" id="tProd">Testar PRODUÇÃO</button></div><p id="rSefaz" class="dica" hidden></p></div>
   <div class="card"><h2 style="margin-top:0">3. Dados fiscais da HIGIVARO (saem na NF-e)</h2>
@@ -1909,6 +1914,19 @@ function ligarNFeAdmin(e) {
   const mostra = (id, html, erro) => { const p = $(id); p.hidden = false; p.innerHTML = html; p.style.background = erro ? '#fdecea' : ''; p.style.color = erro ? 'var(--red)' : ''; };
   const ocupado = async (b, fn) => { b.disabled = true; const t = b.textContent; b.textContent = 'Aguarde…'; try { await fn(); } finally { b.disabled = false; b.textContent = t; } };
   $('#vCert').onclick = (ev) => ocupado(ev.target, async () => { try { const r = await chamarNFe({ acao: 'certificado' }); mostra('#rCert', `✅ Certificado encontrado no cofre: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`); } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); } });
+  $('#gCert').onclick = (ev) => ocupado(ev.target, async () => {
+    const f = $('#arqPfx').files[0], senha = $('#senhaPfx').value;
+    if (!f) return aviso('Escolha o arquivo .pfx do certificado.', true);
+    if (!senha) return aviso('Digite a senha do certificado.', true);
+    if (f.size > 50000) return aviso('Este arquivo é grande demais para ser um certificado .pfx.', true);
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      const r = await chamarNFe({ acao: 'guardar', pfx: btoa(bin), senha });
+      mostra('#rCert', `✅ Certificado guardado no cofre: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`);
+      aviso('Certificado guardado no cofre.');
+    } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); }
+    finally { $('#senhaPfx').value = ''; $('#arqPfx').value = ''; S.sujo = false; }
+  });
   const testar = (amb, b) => ocupado(b, async () => { try { const r = await chamarNFe({ acao: 'status', amb }); mostra('#rSefaz', `${r.cStat === '107' ? '✅' : '⚠️'} ${amb === '1' ? 'PRODUÇÃO' : 'TESTE'}: ${esc(r.cStat)} – ${esc(r.xMotivo)}`, r.cStat !== '107'); } catch (er) { mostra('#rSefaz', '❌ ' + esc(er.message), true); } });
   $('#tHom').onclick = (ev) => testar('2', ev.target); $('#tProd').onclick = (ev) => testar('1', ev.target);
   $('#bCad').onclick = (ev) => ocupado(ev.target, async () => {
