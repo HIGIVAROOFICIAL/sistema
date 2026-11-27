@@ -54,6 +54,7 @@ const ROTAS = [
   [/^#\/notas$/, () => telaSecao('notas')],
   [/^#\/notas\/emitidas$/, telaNFeEmitidas],
   [/^#\/notas\/avulsa$/, telaNFeAvulsa],
+  [/^#\/notas\/servico$/, telaNFSe],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
   [/^#\/admin\/(empresa|usuarios|precos|nfe)$/, (m) => telaAdmin(m)],
@@ -170,7 +171,7 @@ const SECOES = {
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1], ['#/admin/nfe', 'nota', 'NF-e (certificado e dados fiscais)', 1]]],
-  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/avulsa', 'novo', 'Emitir NF-e avulsa', 'emit'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
+  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/avulsa', 'novo', 'Emitir NF-e avulsa', 'emit'], ['#/notas/servico', 'nota', 'NFS-e (serviço)', 'nfe'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
 const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : i[3] === 'nfe' ? pode('emitir_nfe') || pode('vendas') : i[3] === 'emit' ? pode('emitir_nfe') : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
@@ -1862,7 +1863,7 @@ async function telaNFeEmitidas() {
   <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Emitida em</th><th>NF-e</th><th>Cliente</th><th class="num">Valor</th><th>Situação</th><th class="esconde-cel">Emitida por</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   let ns = [];
   const carregar = async () => {
-    let q = sb.from('nfe').select('id,sale_id,ambiente,serie,numero,chave,status,cstat,motivo,protocolo,valor,cliente,cliente_doc,emitida_por,emitida_em,dispositivo,cancelada_por,cancelada_em,motivo_cancelamento,protocolo_cancelamento').order('emitida_em', { ascending: false }).limit(1000);
+    let q = sb.from('nfe').select('id,sale_id,ambiente,serie,numero,chave,status,cstat,motivo,protocolo,valor,cliente,cliente_doc,emitida_por,emitida_em,dispositivo,cancelada_por,cancelada_em,motivo_cancelamento,protocolo_cancelamento').eq('modelo', '55').order('emitida_em', { ascending: false }).limit(1000);
     const m = $('#mes').value; if (m) { const [a, b] = mesRange(m); q = q.gte('emitida_em', a + 'T00:00:00-03:00').lte('emitida_em', b + 'T23:59:59-03:00'); }
     if ($('#sit').value) q = q.eq('status', $('#sit').value);
     const t = limpaBusca($('#busca').value); if (t) q = q.or(`cliente.ilike.%${t}%,chave.ilike.%${t}%` + (/^[0-9]{1,9}$/.test(t) ? `,numero.eq.${t}` : ''));
@@ -1926,6 +1927,271 @@ async function cancelarNFe(n, depois) {
     aviso('NF-e cancelada. Cancelamento registrado.'); depois && depois();
   } catch (e) { falhou(e); }
 }
+// ---------- NFS-e (nota de serviço) — Sistema Nacional da NFS-e ----------
+// O MEI emite a NFS-e só pelo Emissor Nacional (Resolução CGSN 169/2022). A DPS é montada aqui; o programa HIGIVARO-NFe
+// (no PC, com o certificado) assina e envia ao Sistema Nacional, que devolve a NFS-e com número e chave de acesso.
+// MEI: opSimpNac 2, regEspTrib 0, ISS não retido (tpRetISSQN 1) e indTotTrib 0. As notas ficam na tabela nfe com modelo = 'nfse'.
+const CODIGOS_SERVICO = [
+  ['170202', '17.02.02 · Expediente, secretaria em geral, apoio e infraestrutura administrativa'],
+  ['170201', '17.02.01 · Datilografia, digitação, estenografia'],
+  ['170204', '17.02.04 · Redação, edição, revisão'],
+  ['170203', '17.02.03 · Resposta audível'],
+];
+const MOTIVOS_CANC_NFSE = [['1', 'Erro na emissão'], ['2', 'Serviço não prestado'], ['9', 'Outros']];
+const txtNfse = (s, max) => String(s ?? '').replace(/[\u0000-\u001F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const dhNfse = () => new Date(Date.now() - 3 * 3600e3 - 60e3).toISOString().slice(0, 19) + '-03:00'; // 1 min para trás: o Sistema Nacional recusa horário "no futuro"
+const ambNfse = (cfg) => (cfg.nfse_ambiente === '2' ? '2' : '1');
+
+// novo = leiaute da reforma tributária (finNFSe e indDest), que o ambiente de teste já exige; a produção usa o 1.01 atual.
+function montarDPS({ cfg, d, ndps, amb, novo }) {
+  const cMun = soDig(cfg.cMun) || '2903201', serie = String(Number(cfg.nfse_serie) || 1).padStart(5, '0');
+  const id = `DPS${cMun}269959700000104${serie}${String(ndps).padStart(15, '0')}`;
+  const doc = soDig(d.doc), dh = dhNfse(), compet = d.competencia && d.competencia <= dh.slice(0, 10) ? d.competencia : dh.slice(0, 10);
+  const toma = doc ? `<toma><${doc.length === 14 ? 'CNPJ' : 'CPF'}>${doc}</${doc.length === 14 ? 'CNPJ' : 'CPF'}><xNome>${txtNfse(d.nome, 300)}</xNome>${soDig(d.fone).length >= 6 ? `<fone>${soDig(d.fone).slice(0, 20)}</fone>` : ''}${/^\S+@\S+\.\S+$/.test(d.email || '') ? `<email>${txtNfse(d.email, 80)}</email>` : ''}</toma>` : '';
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infDPS Id="${id}"><tpAmb>${amb}</tpAmb><dhEmi>${dh}</dhEmi><verAplic>HIGIVARO-1.1</verAplic><serie>${serie}</serie><nDPS>${ndps}</nDPS><dCompet>${compet}</dCompet><tpEmit>1</tpEmit>${novo ? '<finNFSe>0</finNFSe>' : ''}<cLocEmi>${cMun}</cLocEmi>`
+    + `<prest><CNPJ>69959700000104</CNPJ><regTrib><opSimpNac>2</opSimpNac><regEspTrib>0</regEspTrib></regTrib></prest>${toma}${novo ? '<indDest>0</indDest>' : ''}`
+    + `<serv><locPrest><cLocPrestacao>${cMun}</cLocPrestacao></locPrest><cServ><cTribNac>${soDig(d.ctrib)}</cTribNac><xDescServ>${txtNfse(d.descricao, 2000)}</xDescServ></cServ></serv>`
+    + `<valores><vServPrest><vServ>${nf2(d.valor)}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><indTotTrib>0</indTotTrib></totTrib></trib></valores></infDPS></DPS>`;
+  return { id, xml };
+}
+async function proximoDPS(cfg, amb) {
+  const serie = Number(cfg.nfse_serie) || 1;
+  const u = await ok(sb.from('nfe').select('ndps').eq('modelo', 'nfse').eq('ambiente', amb).eq('serie', serie).in('status', ['autorizada', 'cancelada']).order('ndps', { ascending: false }).limit(1));
+  return Math.max(Number(cfg.nfse_proximo) || 1, (Number(u[0]?.ndps) || 0) + 1);
+}
+const errosNfse = (r) => (r.erros || (r.erro ? [r.erro] : [])).map((e) => `${e.Codigo || e.codigo || ''} – ${e.Descricao || e.descricao || ''}${e.Complemento ? ' (' + e.Complemento + ')' : ''}`).join(' | ') || (r.texto ? String(r.texto).slice(0, 300) : `resposta HTTP ${r.http}`);
+
+async function telaNFSe() {
+  if (!pode('emitir_nfe') && !pode('vendas')) { app.innerHTML = '<p class="vazio">Sem acesso às notas fiscais.</p>'; return; }
+  app.innerHTML = `${secao('notas', '#/notas/servico')}
+  ${pode('emitir_nfe') ? '<div class="acoes" style="margin-top:0"><button class="btn pri" id="novaNfse">＋ Emitir NFS-e (serviço)</button></div>' : ''}
+  <div class="linha"><div style="flex:0 1 200px"><label>Mês</label><input id="mes" type="month" value="" title="Vazio = todos os meses"></div>
+    <div style="flex:0 1 200px"><label>Situação</label><select id="sit"><option value="">Todas</option><option>autorizada</option><option>cancelada</option><option>rejeitada</option><option>rascunho</option></select></div>
+    <div><label>Buscar</label><input id="busca" placeholder="Tomador, CPF/CNPJ ou nº"></div></div>
+  <p class="dica" style="margin-top:4px">🧾 Nota de <b>serviço</b> (CNAE 8219-9/99), emitida no <b>Sistema Nacional da NFS-e</b> com o certificado da HIGIVARO. A cada nota emitida ou cancelada, o administrador recebe um e-mail.</p>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabela"><table><thead><tr><th>Emitida em</th><th>Nº</th><th>Tomador</th><th class="num">Valor</th><th>Situação</th><th class="esconde-cel">Por</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  const carregar = async () => {
+    let q = sb.from('nfe').select('id,ambiente,serie,numero,ndps,chave,status,cstat,motivo,protocolo,valor,cliente,cliente_doc,emitida_por,emitida_em,dispositivo,cancelada_por,cancelada_em,motivo_cancelamento').eq('modelo', 'nfse').order('emitida_em', { ascending: false }).limit(300);
+    const mes = $('#mes').value; if (mes) { const [a, m] = mes.split('-').map(Number); q = q.gte('emitida_em', `${mes}-01T03:00:00Z`).lt('emitida_em', `${m === 12 ? a + 1 : a}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01T03:00:00Z`); }
+    if ($('#sit').value) q = q.eq('status', $('#sit').value);
+    const t = limpaBusca($('#busca').value); if (t) q = q.or(`cliente.ilike.%${t}%,cliente_doc.ilike.%${soDig(t) || t}%` + (/^\d{1,9}$/.test(t) ? `,numero.eq.${t}` : ''));
+    const ns = await ok(q), aut = ns.filter((n) => n.status === 'autorizada');
+    $('#kpis').innerHTML = `<div class="kpi"><small>Autorizadas</small><strong>${aut.length}</strong></div><div class="kpi"><small>Valor autorizado</small><strong>${brl(aut.reduce((s, n) => s + Number(n.valor || 0), 0))}</strong></div><div class="kpi"><small>Canceladas</small><strong style="color:var(--red)">${ns.filter((n) => n.status === 'cancelada').length}</strong></div>`;
+    $('#lista').innerHTML = ns.map((n, k) => `<tr class="clica" data-k="${k}"><td>${new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17)}</td><td>${n.numero ? 'nº ' + esc(n.numero) : '<small style="color:var(--muted)">DPS ' + esc(n.ndps ?? '') + '</small>'}</td><td>${esc(n.cliente || '')}</td><td class="num">${brl(n.valor)}</td><td>${seloNFe(n)}</td><td class="esconde-cel">${esc(n.emitida_por || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma NFS-e ainda.</td></tr>';
+    $$('#lista tr[data-k]').forEach((tr) => (tr.onclick = () => detalheNFSe(ns[tr.dataset.k], carregar)));
+  };
+  if ($('#novaNfse')) $('#novaNfse').onclick = () => emitirNFSe(null, carregar);
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; $('#sit').onchange = carregar;
+  carregar().catch(falhou);
+}
+
+// Janela de emissão: tomador + serviço. "Prever" salva o rascunho e gera o espelho; "Concluir" envia ao Sistema Nacional.
+async function emitirNFSe(rascunho, depois) {
+  try {
+    const emp = await ok(sb.from('company_settings').select('*').eq('id', 1).single()), cfg = emp.nfe_config || {};
+    if (!cfg.razao || !cfg.cMun) return aviso('Preencha e salve os dados fiscais em Admin › NF-e antes de emitir.', true);
+    const amb = ambNfse(cfg), r0 = rascunho?.dados || {};
+    const d0 = { doc: r0.doc || '', nome: r0.nome || '', email: r0.email || '', fone: r0.fone || '', ctrib: r0.ctrib || cfg.nfse_ctrib || '170202', descricao: r0.descricao ?? (cfg.nfse_desc || ''), valor: r0.valor || '', competencia: r0.competencia || hoje() };
+    let rascId = rascunho?.id || null, mudou = false;
+    const ler = (silencioso) => {
+      const d = { doc: soDig($('#sDoc').value), nome: $('#sNome').value.trim().toUpperCase(), email: $('#sEmail').value.trim(), fone: soDig($('#sFone').value), ctrib: soDig($('#sCod').value === 'outro' ? $('#sCodOutro').value : $('#sCod').value), descricao: $('#sDesc').value.trim(), valor: num($('#sValor').value), competencia: $('#sComp').value };
+      const falta = [];
+      if (d.doc && ![11, 14].includes(d.doc.length)) falta.push('CPF (11) ou CNPJ (14 números)');
+      if (d.doc && !d.nome) falta.push('nome do tomador');
+      if (d.ctrib.length !== 6) falta.push('código do serviço (6 números)');
+      if (d.descricao.length < 3) falta.push('descrição do serviço');
+      if (!(d.valor > 0)) falta.push('valor');
+      if (!d.competencia || d.competencia > hoje()) falta.push('data do serviço (não pode ser futura)');
+      if (falta.length) { if (!silencioso) aviso('Falta: ' + falta.join(', '), true); return undefined; }
+      return d;
+    };
+    const salvarRascunho = async (d, ndps) => {
+      const m = montarDPS({ cfg, d, ndps, amb, novo: amb === '2' });
+      rascId = await ok(sb.rpc('nfe_rascunho_salvar', { p_id: rascId, p: { modelo: 'nfse', ndps, ambiente: amb, serie: Number(cfg.nfse_serie) || 1, valor: d.valor, cliente: d.nome || 'TOMADOR NÃO IDENTIFICADO', cliente_doc: d.doc, sale_id: '', xml: m.xml, dispositivo: dispositivo(), dados: d } }));
+      mudou = true; return m;
+    };
+    const cods = CODIGOS_SERVICO.some(([c]) => c === d0.ctrib) ? CODIGOS_SERVICO : [...CODIGOS_SERVICO, [d0.ctrib, d0.ctrib + ' · (código salvo)']];
+    const d = await dialogo(`<h2 style="margin-top:0">NFS-e · nota de serviço ${rascunho ? '<small style="color:var(--muted);font-weight:400">(rascunho)</small>' : ''}${amb === '2' ? ' <span class="selo">teste</span>' : ''}</h2>
+      <h3 style="margin:8px 0 4px">Tomador (quem contratou o serviço)</h3>
+      <div class="linha"><div style="flex:1 1 150px"><label>CPF ou CNPJ</label><input id="sDoc" inputmode="numeric" value="${esc(d0.doc)}" placeholder="Só números"></div>
+        <div style="flex:3 1 260px"><label>Nome / Razão social</label><input id="sNome" value="${esc(d0.nome)}"></div></div>
+      <div class="linha"><div style="flex:2 1 200px"><label>E-mail <small>(opcional)</small></label><input id="sEmail" type="email" value="${esc(d0.email)}"></div>
+        <div style="flex:1 1 140px"><label>Telefone <small>(opcional)</small></label><input id="sFone" inputmode="tel" value="${esc(d0.fone)}"></div></div>
+      <p id="sDocInfo" class="dica" hidden></p>
+      <h3 style="margin:12px 0 4px">Serviço</h3>
+      <label>Código do serviço (lista nacional) *</label>
+      <select id="sCod">${cods.map(([c, r]) => `<option value="${c}" ${c === d0.ctrib ? 'selected' : ''}>${esc(r)}</option>`).join('')}<option value="outro">Outro código…</option></select>
+      <input id="sCodOutro" inputmode="numeric" maxlength="6" placeholder="Código de 6 números (ex.: 170202)" hidden style="margin-top:6px">
+      <label>Descrição do serviço * <small>(sai na nota)</small></label>
+      <textarea id="sDesc" rows="4" maxlength="2000" placeholder="Ex.: Serviço de apoio administrativo: digitação e organização de documentos referente a novembro/2026.">${esc(d0.descricao)}</textarea>
+      <div class="linha"><div style="flex:1 1 140px"><label>Valor do serviço (R$) *</label><input id="sValor" inputmode="decimal" value="${d0.valor ? esc(String(d0.valor).replace('.', ',')) : ''}"></div>
+        <div style="flex:1 1 160px"><label>Data do serviço (competência) *</label><input id="sComp" type="date" max="${hoje()}" value="${esc(d0.competencia)}"></div></div>
+      <div class="acoes"><button type="button" class="btn azul" id="sPrever">👁 Prever (salvar rascunho e ver o espelho)</button></div>
+      <p class="dica">MEI: o ISS já é pago no DAS, por isso a nota sai <b>sem retenção</b> e sem destaque de impostos.<br><b>Prever</b> salva como rascunho, <b>sem enviar</b>. <b>Concluir</b> envia ao Sistema Nacional da NFS-e: a nota passa a ter <b>valor fiscal</b>.</p>`, '✅ Concluir e emitir',
+      () => ler(),
+      () => {
+        $('.fundo-dialogo:last-child .dialogo').classList.add('largo');
+        $('#sCod').onchange = () => { $('#sCodOutro').hidden = $('#sCod').value !== 'outro'; if (!$('#sCodOutro').hidden) $('#sCodOutro').focus(); };
+        const buscar = async () => {
+          const doc = soDig($('#sDoc').value), info = $('#sDocInfo');
+          if (doc.length !== 14 || $('#sNome').value.trim()) return;
+          info.hidden = false; info.textContent = 'Buscando o CNPJ na Receita…';
+          try { const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + doc); if (!r.ok) throw new Error(); const j = await r.json(); $('#sNome').value = j.razao_social || ''; if (!$('#sEmail').value && j.email) $('#sEmail').value = String(j.email).toLowerCase(); info.textContent = '✅ Nome preenchido pelo cadastro do CNPJ na Receita. Confira.'; }
+          catch { info.textContent = 'Não encontrei o CNPJ automaticamente: preencha o nome.'; }
+        };
+        $('#sDoc').onchange = buscar; $('#sDoc').onblur = buscar;
+        $('#sPrever').onclick = async (ev) => {
+          const dd = ler(); if (!dd) return; const b = ev.target; b.disabled = true;
+          try { const ndps = await proximoDPS(cfg, amb), m = await salvarRascunho(dd, ndps); await danfsePDF(m.xml, cfg); aviso('Rascunho salvo e espelho gerado (não foi enviado).'); }
+          catch (e) { falhou(e); }
+          b.disabled = false;
+        };
+      });
+    if (!d) { if (mudou) depois && depois(); return; }
+    if (!confirm(`Emitir a NFS-e no Sistema Nacional${amb === '2' ? ' (AMBIENTE DE TESTE)' : ''}?\n\n${d.nome || 'Tomador não identificado'} · ${brl(d.valor)}\n\nDepois de emitida, a nota tem valor fiscal.`)) { if (mudou) depois && depois(); return; }
+    await assinadorNFe('/status', {});
+    aviso('Enviando a NFS-e para o Sistema Nacional…');
+    let ndps = await proximoDPS(cfg, amb), novo = amb === '2', r, m;
+    for (let tent = 0; tent < 6; tent++) {
+      m = montarDPS({ cfg, d, ndps, amb, novo });
+      r = await assinadorNFe('/nfse/enviar', { amb, xml: m.xml });
+      const cods = (r.erros || []).map((e) => e.Codigo);
+      if (cods.includes('E1235') && /finNFSe|indDest/.test(errosNfse(r)) && tent < 5) { novo = !novo; continue; } // leiaute mudou no Sistema Nacional
+      if (cods.includes('E0014') && tent < 5) { ndps++; continue; } // nº da DPS já usado: passa para o próximo
+      break;
+    }
+    const autorizada = !!r.chaveAcesso && [200, 201].includes(Number(r.http));
+    const nx = autorizada && r.nfseXml ? new DOMParser().parseFromString(r.nfseXml, 'text/xml') : null;
+    const numero = nx ? Number(nx.getElementsByTagNameNS('*', 'nNFSe')[0]?.textContent) || null : null;
+    const reg = { modelo: 'nfse', ndps, rascunho_id: rascId || '', ambiente: amb, serie: Number(cfg.nfse_serie) || 1, numero, chave: autorizada ? r.chaveAcesso : null, status: autorizada ? 'autorizada' : 'rejeitada', cstat: autorizada ? '100' : (r.erros || [])[0]?.Codigo || String(r.http || ''), motivo: autorizada ? 'NFS-e gerada no Sistema Nacional' : errosNfse(r), protocolo: autorizada ? (nx?.getElementsByTagNameNS('*', 'nDFSe')[0]?.textContent || null) : null, valor: d.valor, cliente: d.nome || 'TOMADOR NÃO IDENTIFICADO', cliente_doc: d.doc, sale_id: '', dispositivo: dispositivo(), xml: autorizada ? (r.nfseXml || r.xmlAssinado) : (r.xmlAssinado || m.xml) };
+    try { await ok(sb.rpc('registrar_nfe', { p: reg })); } catch (e) { if (autorizada) await dialogo(`<h2 style="margin-top:0">⚠️ NFS-e emitida, mas não registrada</h2><p>O Sistema Nacional gerou a NFS-e nº ${numero ?? ''} (chave ${esc(r.chaveAcesso)}), mas o sistema não conseguiu gravar o registro (${esc(e.message)}). Baixe o XML agora e me avise.</p>`, 'Baixar XML', () => baixarArquivo(`NFSe${r.chaveAcesso}.xml`, r.nfseXml || '')); }
+    if (autorizada) {
+      aviso('NFS-e emitida e registrada.');
+      const acao = await dialogo(`<h2 style="margin-top:0">✅ NFS-e nº ${numero ?? ''} emitida</h2><p>${esc(d.nome || 'Tomador não identificado')} · <b>${brl(d.valor)}</b><br><small>Chave ${esc(r.chaveAcesso)}</small></p><p style="color:var(--muted)">O administrador recebeu o e-mail de aviso.</p>`, '📄 PDF da NFS-e', () => 'pdf');
+      if (acao === 'pdf') danfsePDF(r.nfseXml, cfg).catch(falhou);
+    } else {
+      await dialogo(`<h2 style="margin-top:0">❌ O Sistema Nacional recusou a NFS-e</h2><p><b>${esc(reg.motivo)}</b></p><p class="dica">Corrija o que a mensagem indica e conclua de novo.${rascId ? ' O rascunho continua salvo na lista de NFS-e.' : ' A tentativa ficou registrada na lista de NFS-e.'}</p>`, 'Entendi');
+    }
+    depois && depois();
+  } catch (e) { falhou(e); }
+}
+
+async function detalheNFSe(n, depois) {
+  const podeCancelar = n.status === 'autorizada' && pode('emitir_nfe');
+  const linha = (r, v) => v ? `<tr><td style="color:var(--muted);padding:3px 12px 3px 0">${r}</td><td><b>${esc(v)}</b></td></tr>` : '';
+  const quando = (s) => new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Bahia' });
+  return dialogo(`<h2 style="margin-top:0">NFS-e ${n.numero ? 'nº ' + esc(n.numero) : '(DPS ' + esc(n.ndps ?? '') + ')'} ${seloNFe(n)}</h2>
+    <table style="font-size:14px">${linha('Tomador', (n.cliente || '') + (n.cliente_doc ? ' · ' + formatarDoc(n.cliente_doc) : ''))}${linha('Valor', brl(n.valor))}${linha('Nº da DPS', String(n.ndps ?? ''))}${linha('Chave de acesso', n.chave)}${linha('Situação', (n.cstat ? n.cstat + ' · ' : '') + (n.motivo || ''))}
+    ${linha('Emitida por', n.emitida_por)}${linha('Emitida em', quando(n.emitida_em))}${linha('Aparelho', n.dispositivo)}
+    ${n.status === 'cancelada' ? linha('Cancelada por', n.cancelada_por) + linha('Cancelada em', quando(n.cancelada_em)) + linha('Motivo', n.motivo_cancelamento) : ''}</table>
+    ${n.status === 'rascunho' ? '<p class="dica">📝 <b>Rascunho</b>: ainda não foi enviado ao Sistema Nacional. Veja o espelho, conclua para emitir ou exclua.</p>' : ''}
+    <div class="acoes">${n.status === 'rascunho' && pode('emitir_nfe') ? '<button type="button" class="btn pri" id="sConcluir">✅ Concluir e emitir</button>' : ''}${n.status !== 'rejeitada' ? `<button type="button" class="btn azul" id="sPdf">${n.status === 'rascunho' ? '👁 Espelho (PDF)' : '📄 PDF da NFS-e'}</button>` : ''}${n.chave ? '<button type="button" class="btn" id="sOficial">📄 DANFSe oficial</button>' : ''}${n.status === 'rascunho' && pode('emitir_nfe') ? '<button type="button" class="btn perigo" id="sExcluir">🗑 Excluir rascunho</button>' : ''}<button type="button" class="btn" id="sXml">⬇️ Baixar XML</button>${n.chave ? '<button type="button" class="btn" id="sConsultar">🔎 Consultar no Sistema Nacional</button>' : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="sCancelar">Cancelar NFS-e</button>' : ''}</div>
+    <p id="sRes" class="dica" hidden></p>`, 'Fechar', null, () => {
+    $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('.fundo-dialogo:last-child #dCancela').remove();
+    const fechaEsta = () => $('.fundo-dialogo:last-child').remove();
+    const lerNota = async (campos) => ok(sb.from('nfe').select(campos).eq('id', n.id).single());
+    const cfgAtual = async () => (await ok(sb.from('company_settings').select('nfe_config').eq('id', 1).single())).nfe_config || {};
+    if ($('#sPdf')) $('#sPdf').onclick = async () => { try { const x = await lerNota('xml'); await danfsePDF(x.xml, await cfgAtual()); } catch (e) { falhou(e); } };
+    if ($('#sOficial')) $('#sOficial').onclick = async (ev) => {
+      const b = ev.target, p = $('#sRes'); b.disabled = true; p.hidden = false; p.textContent = 'Baixando o DANFSe do Sistema Nacional…';
+      try { const r = await assinadorNFe('/nfse/danfse', { amb: n.ambiente, chave: n.chave }); if (!r.pdfB64) throw new Error(`o Sistema Nacional ainda não liberou o PDF desta nota (HTTP ${r.http}). Use o botão "PDF da NFS-e".`); const a = document.createElement('a'); a.href = 'data:application/pdf;base64,' + r.pdfB64; a.download = `DANFSe-${n.numero || n.ndps}.pdf`; a.click(); p.textContent = '✅ DANFSe oficial baixado.'; }
+      catch (e) { p.textContent = '❌ ' + e.message; }
+      b.disabled = false;
+    };
+    if ($('#sConcluir')) $('#sConcluir').onclick = async () => { try { const x = await lerNota('dados'); if (!x.dados) return aviso('Rascunho sem os dados da nota.', true); fechaEsta(); emitirNFSe({ id: n.id, dados: x.dados }, depois); } catch (e) { falhou(e); } };
+    if ($('#sExcluir')) $('#sExcluir').onclick = async () => { if (!confirm('Excluir este rascunho de NFS-e? (Ele nunca foi enviado.)')) return; try { await ok(sb.rpc('nfe_rascunho_excluir', { p_id: n.id })); fechaEsta(); aviso('Rascunho excluído.'); depois && depois(); } catch (e) { falhou(e); } };
+    $('#sXml').onclick = async () => { try { const x = await lerNota('xml,xml_cancelamento,chave,ndps'); if (!x.xml) return aviso('Esta nota não tem XML guardado.', true); baixarArquivo(`NFSe${x.chave || 'DPS' + x.ndps}.xml`, x.xml); if (x.xml_cancelamento) baixarArquivo(`NFSe${x.chave}-cancelamento.xml`, x.xml_cancelamento); } catch (e) { falhou(e); } };
+    if ($('#sConsultar')) $('#sConsultar').onclick = async (ev) => {
+      const b = ev.target, p = $('#sRes'); b.disabled = true; p.hidden = false; p.textContent = 'Consultando o Sistema Nacional…';
+      try {
+        const r = await assinadorNFe('/nfse/consultar', { amb: n.ambiente, chave: n.chave });
+        if (!r.nfseXml) throw new Error(errosNfse(r));
+        const x = new DOMParser().parseFromString(r.nfseXml, 'text/xml'), t = (k) => x.getElementsByTagNameNS('*', k)[0]?.textContent || '';
+        p.innerHTML = `✅ <b>Nota encontrada no Sistema Nacional</b> · nº ${esc(t('nNFSe'))} · ${brl(t('vLiq') || n.valor)}${n.status === 'cancelada' ? '<br>Cancelamento registrado no sistema da HIGIVARO.' : ''}<br><small>Também dá para conferir no <a href="https://www.nfse.gov.br/consultapublica" target="_blank" rel="noopener">portal da NFS-e</a> com a chave de acesso.</small>`;
+      } catch (e) { p.innerHTML = '❌ ' + esc(e.message); }
+      b.disabled = false;
+    };
+    if ($('#sCancelar')) $('#sCancelar').onclick = () => { fechaEsta(); cancelarNFSe(n, depois); };
+  });
+}
+
+async function cancelarNFSe(n, depois) {
+  const r0 = await dialogo(`<h2 style="margin-top:0">Cancelar NFS-e nº ${esc(n.numero ?? '')}</h2><p>${esc(n.cliente || '')} · <b>${brl(n.valor)}</b></p>
+    <label>Motivo *</label><select id="sMot">${MOTIVOS_CANC_NFSE.map(([c, r]) => `<option value="${c}">${r}</option>`).join('')}</select>
+    <label>Explique * <small>(mínimo 15 letras; vai para o Sistema Nacional)</small></label><textarea id="sJust" rows="3" maxlength="255" placeholder="Ex.: valor digitado errado, a nota será emitida de novo"></textarea>
+    <p class="dica">O cancelamento não pode ser desfeito. A prefeitura pode ter prazo para cancelar. Um e-mail de aviso será enviado ao administrador.</p>`, 'Cancelar a nota',
+    () => { const m = $('#sJust').value.trim().replace(/\s+/g, ' '); if (m.length < 15) { $('#sJust').classList.add('falta'); aviso('A explicação precisa ter pelo menos 15 letras.', true); return undefined; } return { cod: $('#sMot').value, m }; },
+    () => setTimeout(() => $('#sJust').focus(), 30));
+  if (!r0) return;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><pedRegEvento xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infPedReg Id="PRE${n.chave}101101"><tpAmb>${n.ambiente}</tpAmb><verAplic>HIGIVARO-1.1</verAplic><dhEvento>${dhNfse()}</dhEvento><CNPJAutor>69959700000104</CNPJAutor><chNFSe>${n.chave}</chNFSe><e101101><xDesc>Cancelamento de NFS-e</xDesc><cMotivo>${r0.cod}</cMotivo><xMotivo>${txtNfse(r0.m, 255)}</xMotivo></e101101></infPedReg></pedRegEvento>`;
+  try {
+    aviso('Enviando o cancelamento ao Sistema Nacional…');
+    const r = await assinadorNFe('/nfse/evento', { amb: n.ambiente, chave: n.chave, xml });
+    if (![200, 201].includes(Number(r.http))) throw new Error('O Sistema Nacional recusou: ' + errosNfse(r));
+    const motivo = (MOTIVOS_CANC_NFSE.find((x) => x[0] === r0.cod) || [])[1] + ': ' + r0.m;
+    await ok(sb.rpc('registrar_cancelamento_nfe', { p_id: n.id, p_motivo: motivo, p_protocolo: null, p_xml: r.eventoXml || r.xmlAssinado }));
+    aviso('NFS-e cancelada. Cancelamento registrado.'); depois && depois();
+  } catch (e) { falhou(e); }
+}
+
+// PDF da NFS-e (do XML da nota) ou espelho (do XML da DPS ainda não enviada).
+async function danfsePDF(xml, cfg = {}) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const um = (pai, k) => (pai || doc).getElementsByTagNameNS('*', k)[0], t = (pai, k) => um(pai, k)?.textContent || '';
+  const inf = um(null, 'infNFSe'), dps = um(null, 'infDPS'), toma = um(dps, 'toma'), emit = um(inf, 'emit'), espelho = !inf;
+  const teste = (inf ? t(inf, 'ambGer') : t(dps, 'tpAmb')) === '2';
+  const chave = inf ? (inf.getAttribute('Id') || '').replace('NFS', '') : '';
+  const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const M = 10, L = 190; let y = M;
+  const dataHora = (s) => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).replace(',', '') : '';
+  const caixa = (x, w, h, rot, val, o = {}) => {
+    pdf.setDrawColor(120); pdf.setLineWidth(0.2); pdf.rect(x, y, w, h);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(90); pdf.text(rot.toUpperCase(), x + 1.5, y + 3.2);
+    pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(o.s || 9); pdf.setTextColor(0);
+    const linhas = pdf.splitTextToSize(String(val ?? ''), w - 3); pdf.text(linhas.slice(0, o.max || 2), x + 1.5, y + 7.5);
+  };
+  const faixa = (txt) => { pdf.setFillColor(235, 241, 248); pdf.rect(M, y, L, 6, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(20, 50, 90); pdf.text(txt, M + 2, y + 4.2); pdf.setTextColor(0); y += 7; };
+  // Cabeçalho
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14); pdf.text('DANFSe', M, y + 6);
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5); pdf.text('Documento Auxiliar da Nota Fiscal de Serviço eletrônica', M, y + 11);
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11); pdf.text(espelho ? 'ESPELHO (rascunho)' : `NFS-e nº ${t(inf, 'nNFSe')}`, M + L, y + 6, { align: 'right' });
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8.5); pdf.text(`DPS nº ${t(dps, 'nDPS')} · série ${Number(t(dps, 'serie')) || ''}`, M + L, y + 11, { align: 'right' });
+  y += 15;
+  caixa(M, 120, 11, 'Chave de acesso', espelho ? 'NÃO ENVIADA AO SISTEMA NACIONAL' : chave.replace(/(\d{4})(?=\d)/g, '$1 '), { b: true, s: 8.5, max: 1 });
+  caixa(M + 120, 35, 11, 'Emissão', dataHora(espelho ? t(dps, 'dhEmi') : t(inf, 'dhProc')));
+  caixa(M + 155, 35, 11, 'Competência', dataBR(t(dps, 'dCompet'))); y += 13;
+  // Prestador
+  faixa('PRESTADOR DO SERVIÇO');
+  const nomeP = t(emit, 'xNome') || cfg.razao || 'HIGIVARO', endP = emit ? `${t(emit, 'xLgr')}, ${t(emit, 'nro')} - ${t(emit, 'xBairro')} - ${(t(inf, 'xLocEmi') || cfg.municipio || '')}/${t(emit, 'UF') || 'BA'} - CEP ${t(emit, 'CEP')}` : `${cfg.logradouro || ''}, ${cfg.numero || ''} - ${cfg.bairro || ''} - ${cfg.municipio || ''}/BA - CEP ${cfg.cep || ''}`;
+  caixa(M, 120, 11, 'Nome / razão social', nomeP, { b: true }); caixa(M + 120, 70, 11, 'CNPJ', formatarDoc('69959700000104')); y += 11;
+  caixa(M, 120, 11, 'Endereço', endP, { s: 8 }); caixa(M + 120, 70, 11, 'Regime', 'MEI - Microempreendedor Individual'); y += 11;
+  caixa(M, 120, 11, 'E-mail', (t(emit, 'email') || '').toLowerCase()); caixa(M + 120, 70, 11, 'Telefone', t(emit, 'fone') || cfg.fone || ''); y += 13;
+  // Tomador
+  faixa('TOMADOR DO SERVIÇO');
+  const docT = t(toma, 'CNPJ') || t(toma, 'CPF');
+  caixa(M, 120, 11, 'Nome / razão social', toma ? t(toma, 'xNome') : 'NÃO IDENTIFICADO', { b: true }); caixa(M + 120, 70, 11, docT.length === 14 ? 'CNPJ' : 'CPF', docT ? formatarDoc(docT) : '-'); y += 11;
+  caixa(M, 120, 11, 'E-mail', t(toma, 'email')); caixa(M + 120, 70, 11, 'Telefone', t(toma, 'fone')); y += 13;
+  // Serviço
+  faixa('SERVIÇO PRESTADO');
+  const ct = t(dps, 'cTribNac'), descCod = t(inf, 'xTribNac') || (CODIGOS_SERVICO.find((c) => c[0] === ct) || [])[1] || '';
+  caixa(M, 120, 11, 'Código de tributação nacional', `${ct.replace(/(\d{2})(\d{2})(\d{2})/, '$1.$2.$3')} - ${descCod.replace(/^\d{2}\.\d{2}\.\d{2} · /, '')}`, { s: 8 });
+  caixa(M + 120, 70, 11, 'Local da prestação / incidência do ISS', `${t(inf, 'xLocPrestacao') || cfg.municipio || 'BARREIRAS'}/BA`); y += 11;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); const desc = pdf.splitTextToSize(t(dps, 'xDescServ'), L - 3), hD = Math.max(16, desc.length * 4 + 8);
+  pdf.setDrawColor(120); pdf.rect(M, y, L, hD); pdf.setFontSize(6.5); pdf.setTextColor(90); pdf.text('DESCRIÇÃO DO SERVIÇO', M + 1.5, y + 3.2); pdf.setFontSize(9); pdf.setTextColor(0); pdf.text(desc, M + 1.5, y + 7.5); y += hD + 2;
+  // Valores
+  faixa('VALORES');
+  const v = Number(t(dps, 'vServ')) || 0;
+  caixa(M, 63, 11, 'Valor do serviço', brl(v), { b: true }); caixa(M + 63, 63, 11, 'ISS retido', 'Não'); caixa(M + 126, 64, 11, 'Valor líquido', brl(Number(t(inf, 'vLiq')) || v), { b: true, s: 11 }); y += 13;
+  faixa('INFORMAÇÕES COMPLEMENTARES');
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8);
+  const info = ['Documento emitido por MEI - Microempreendedor Individual. O ISS e os tributos federais são recolhidos no DAS-MEI (Simples Nacional); não há destaque de impostos nesta nota.',
+    espelho ? 'ESPELHO: esta NFS-e ainda NÃO foi enviada ao Sistema Nacional da NFS-e - SEM VALOR FISCAL.' : 'Consulte a autenticidade em www.nfse.gov.br/consultapublica com a chave de acesso acima.'];
+  pdf.text(pdf.splitTextToSize(info.join('\n'), L - 3), M + 1.5, y + 3.5);
+  if (espelho || teste) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(espelho ? 50 : 38); pdf.setTextColor(210, 40, 40); pdf.text(espelho ? 'ESPELHO' : 'TESTE - SEM VALOR', 105, 160, { align: 'center', angle: 25 }); pdf.setFontSize(11); pdf.text(espelho ? 'NFS-e NÃO ENVIADA - SEM VALOR FISCAL' : 'Ambiente de teste do Sistema Nacional', 105, 172, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
+  pdf.save(`${espelho ? 'ESPELHO-NFSe-DPS' + t(dps, 'nDPS') : 'NFSe-' + t(inf, 'nNFSe')}.pdf`);
+}
+
 // ---------- Emissão de NF-e (modelo 55, MEI, SEFAZ-BA) ----------
 // A nota é montada aqui; o programa HIGIVARO-NFe (no PC, com o certificado instalado no Windows) assina e envia à SEFAZ-BA.
 // MEI: CRT 4, CSOSN 102 (ou 500 quando o ICMS já foi pago por substituição); em 2026 o MEI não informa o grupo IBS/CBS.
@@ -1939,7 +2205,7 @@ const dispositivo = () => { const ua = navigator.userAgent; const so = /Android/
 
 async function proximoNumeroNFe(cfg) {
   const amb = cfg.ambiente === '1' ? '1' : '2', serie = Number(cfg.serie) || 1;
-  const u = await ok(sb.from('nfe').select('numero').eq('ambiente', amb).eq('serie', serie).in('status', ['autorizada', 'cancelada']).order('numero', { ascending: false }).limit(1));
+  const u = await ok(sb.from('nfe').select('numero').eq('modelo', '55').eq('ambiente', amb).eq('serie', serie).in('status', ['autorizada', 'cancelada']).order('numero', { ascending: false }).limit(1));
   return Math.max(Number(cfg.proximo) || 1, (Number(u[0]?.numero) || 0) + 1);
 }
 // Código IBGE do município pelo nome (API pública do IBGE).
@@ -1976,7 +2242,7 @@ async function dadosDestinatario(v) {
   let fonte = '';
   if (doc) {
     try {
-      const ult = await ok(sb.from('nfe').select('xml').eq('cliente_doc', doc).not('xml', 'is', null).order('emitida_em', { ascending: false }).limit(1));
+      const ult = await ok(sb.from('nfe').select('xml').eq('modelo', '55').eq('cliente_doc', doc).not('xml', 'is', null).order('emitida_em', { ascending: false }).limit(1));
       if (ult[0]?.xml) {
         const x = new DOMParser().parseFromString(ult[0].xml, 'text/xml'), de = x.getElementsByTagNameNS('*', 'dest')[0];
         const t = (n) => de?.getElementsByTagNameNS('*', n)[0]?.textContent || '';
@@ -2314,6 +2580,12 @@ function formNFeAdmin(e) {
     <label>Textos prontos para o rodapé da NF-e <small>(um por linha; aparecem no menu na hora de emitir)</small></label>
     <textarea name="textos" rows="5" placeholder="Ex.: Mercadoria entregue conforme o pedido.">${esc(textosRodape(c).join('\n'))}</textarea>
     <p class="dica">As notas são emitidas em <b>PRODUÇÃO</b> (com valor fiscal). Na emissão, use <b>Prever</b> para salvar o rascunho e conferir o espelho antes de <b>Concluir</b>. O próximo nº deve continuar a numeração que a empresa já usa (se já emitiu notas em outro emissor, nesta mesma série).</p>
+    <h3 style="margin:18px 0 4px">NFS-e (nota de serviço · Sistema Nacional)</h3>
+    <div class="linha"><div style="flex:2 1 260px"><label>Código do serviço padrão</label><select name="nfse_ctrib">${CODIGOS_SERVICO.map(([cc, r]) => `<option value="${cc}" ${(c.nfse_ctrib || '170202') === cc ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></div>
+      <div style="flex:0 1 110px"><label>Série da DPS</label><input name="nfse_serie" inputmode="numeric" value="${v('nfse_serie', '1')}"></div><div style="flex:0 1 160px"><label>Próximo nº da DPS</label><input name="nfse_proximo" inputmode="numeric" value="${v('nfse_proximo', '1')}"></div>
+      <div style="flex:1 1 200px"><label>Ambiente da NFS-e</label><select name="nfse_ambiente"><option value="1" ${c.nfse_ambiente !== '2' ? 'selected' : ''}>PRODUÇÃO (valor fiscal)</option><option value="2" ${c.nfse_ambiente === '2' ? 'selected' : ''}>TESTE (sem valor fiscal)</option></select></div></div>
+    <label>Descrição padrão do serviço <small>(vem preenchida na hora de emitir; dá para mudar)</small></label><textarea name="nfse_desc" rows="2" maxlength="2000">${v('nfse_desc')}</textarea>
+    <p class="dica">CNAE de serviço da HIGIVARO: 8219-9/99 (apoio administrativo) → código nacional 17.02.02. Confirme com o contador. As séries 1 a 49999 são as de sistema próprio (o site e o app do governo usam outra faixa), então a numeração não se mistura.</p>
     <div class="acoes"><button class="btn pri">Salvar dados fiscais</button></div></form></div>`;
 }
 function ligarNFeAdmin(e) {
@@ -2333,7 +2605,7 @@ function ligarNFeAdmin(e) {
   $('#ffis').onsubmit = async (ev) => {
     ev.preventDefault(); const d = Object.fromEntries(new FormData(ev.target)); Object.keys(d).forEach((k) => (d[k] = String(d[k]).trim()));
     d.textos = String(d.textos || '').split('\n').map((t) => t.trim()).filter(Boolean).slice(0, 30);
-    d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1);
+    d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1); d.nfse_serie = String(Math.min(49999, Number(soDig(d.nfse_serie)) || 1)); d.nfse_proximo = String(Number(soDig(d.nfse_proximo)) || 1); d.nfse_desc = String(d.nfse_desc || '').replace(/\s+/g, ' ').trim();
     const falta = [['razao', 'razão social'], ['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
     if (falta.length) return aviso('Preencha: ' + falta.map((x) => x[1]).join(', '), true);
     d.ambiente = '1';
