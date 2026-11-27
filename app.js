@@ -90,6 +90,10 @@ const CAMPOS_DE_BUSCA = /^(busca|bp|bcli|addItem|mes|sit|st)$/;
   if (CAMPOS_DE_BUSCA.test(el.id) || el.classList.contains('buscaProd') || el.type === 'file') return;
   S.sujo = true;
 }, true));
+// Cliques que mudam o que está sendo montado (escolher produto/sugestão, remover item, parcela) também contam como alteração.
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#app .sugestoes [data-id], #app [data-sug], #app [data-x], #app [data-xp], #app [data-usar], #app #maisParc')) S.sujo = true;
+}, true);
 window.addEventListener('beforeunload', (e) => { if (S.sujo) { e.preventDefault(); e.returnValue = ''; } });
 function perguntarSalvar() {
   return new Promise((fim) => {
