@@ -414,6 +414,7 @@ async function telaProdutos(modo) {
   app.innerHTML = `${topo}
   <div class="linha"><input id="busca" placeholder="Palavras-chave (ex.: agua 5l candeias) • do mais barato ao mais caro"></div>
   ${estoque ? '<p style="color:var(--muted);margin:8px 0 0">Produtos com estoque <b>até 5 unidades</b>, do menor estoque para o maior.</p>' : ''}
+  ${podeEditarProdutos() ? '<p style="color:var(--muted);margin:8px 0 0;font-size:13px">✏️ Dê <b>dois cliques</b> num produto para editar.</p>' : ''}
   <div id="form"></div><div class="tabela" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Descrição</th><th class="esconde-cel">Marca</th><th>Un.</th><th class="num">Estoque</th><th class="num">Preço</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
     let ps;
@@ -423,7 +424,8 @@ async function telaProdutos(modo) {
       ps = await ok(q);
     } else ps = await buscarProdutos($('#busca').value, 200, true);
     $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}${p.active === false ? ' <span class="selo devolvida">inativo</span>' : ''}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
-    if (podeEditarProdutos()) $('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formProduto(ps.find((p) => p.id === tr.dataset.id), carregar)));
+    // Editar: dois cliques no produto (só administrador ou quem tem "Editar produtos e preços").
+    if (podeEditarProdutos()) $('#lista tr[data-id]').forEach((tr) => { tr.title = 'Dois cliques para editar'; tr.ondblclick = () => { window.getSelection()?.removeAllRanges(); formProduto(ps.find((p) => p.id === tr.dataset.id), carregar); }; });
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
   carregar(); $('#busca').focus();
