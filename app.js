@@ -969,7 +969,8 @@ async function telaVendas(modo) {
 async function telaVenda(id) {
   const [v, itens] = await Promise.all([ok(sb.from('sales').select('*').eq('id', id).single()), ok(sb.from('sale_items').select('*').eq('sale_id', id).order('description'))]);
   app.innerHTML = `${barraVoltar('Venda nº ' + esc(v.number) + ' ' + statusSelo(v.status), '#/vendas')}
-  <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button><button class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
+  <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button><button class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button>${v.status === 'confirmada' && pode('emitir_nfe') ? '<button class="btn azul" id="emitirNfe">🧾 Emitir NF-e</button>' : ''}${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
+  <div id="nfesVenda"></div>
   <div class="card">${v.client_code ? `<span class="selo">cliente ${v.client_code}</span> ` : ""}<b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
   ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}${v.return_reason ? `<br>Motivo: <b>${esc(v.return_reason)}</b>` : ''}</p>` : ''}</div>
   ${v.observations ? `<div class="card obs-doc"><b>📝 Informação adicional</b> <small>(sai no PDF)</small><p>${esc(v.observations)}</p></div>` : ''}
@@ -990,6 +991,13 @@ async function telaVenda(id) {
     if (r) atualizar({ due_date: r }, 'Vencimento alterado.');
   };
   $('#obsBtn').onclick = async () => { const r = await editarObs(v.observations, 'venda'); if (r !== null) atualizar({ observations: r || null }, 'Informação salva.'); };
+  // NF-e desta venda (emitir, ver, DANFE)
+  if ($('#emitirNfe')) $('#emitirNfe').onclick = () => emitirNFe(v, () => telaVenda(id));
+  sb.from('nfe').select('id,numero,serie,status,ambiente,cstat,motivo,emitida_em').eq('sale_id', id).order('emitida_em', { ascending: false }).then(({ data }) => {
+    if (!data || !data.length || !$('#nfesVenda')) return;
+    $('#nfesVenda').innerHTML = `<div class="card"><b>🧾 NF-e desta venda</b>${data.map((n) => `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><span>nº ${n.numero} ${seloNFe(n)} <small style="color:var(--muted)">${new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17)}${n.status === 'rejeitada' ? ' · ' + esc(n.cstat + ' ' + n.motivo) : ''}</small></span>${n.status !== 'rejeitada' ? `<button class="btn" data-danfe="${n.id}" style="padding:4px 10px">📄 DANFE</button>` : ''}</div>`).join('')}</div>`;
+    $$('[data-danfe]').forEach((b) => (b.onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml').eq('id', b.dataset.danfe).single()); await danfePDF(x.xml); } catch (e) { falhou(e); } }));
+  });
   if ($('#reabrir')) $('#reabrir').onclick = () => { if (confirm('Voltar a venda nº ' + v.number + ' para "a receber"?')) atualizar({ payment_status: 'aberto', received_at: null, received_by: null }, 'Venda voltou para "a receber".'); };
   // Devolução: o motivo é obrigatório (aparece na venda e em Financeiro › Devoluções).
   if ($('#devolver')) $('#devolver').onclick = async () => {
@@ -1807,7 +1815,7 @@ const seloNFe = (n) => `<span class="selo ${n.status === 'autorizada' ? 'recebid
 async function assinadorNFe(caminho, dados) {
   let r;
   try { r = await fetch('http://localhost:8765' + caminho, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados) }); }
-  catch { throw new Error('o assinador de NF-e não está disponível neste computador'); }
+  catch { throw new Error('o programa HIGIVARO-NFe não está aberto neste computador (ele precisa estar rodando, com o certificado da HIGIVARO instalado). Se o navegador perguntar, permita o acesso à rede local.'); }
   const j = await r.json(); if (!j.ok) throw new Error(j.erro || 'falha no assinador'); return j;
 }
 const dhBahia = () => { const d = new Date(Date.now() - 3 * 3600e3); return d.toISOString().slice(0, 19) + '-03:00'; };
@@ -1844,10 +1852,11 @@ async function detalheNFe(n, depois) {
     <table style="font-size:14px">${linha('Cliente', (n.cliente || '') + (n.cliente_doc ? ' · ' + n.cliente_doc : ''))}${linha('Valor', brl(n.valor))}${linha('Série', String(n.serie ?? ''))}${linha('Chave', n.chave)}${linha('Protocolo', n.protocolo)}${linha('SEFAZ', (n.cstat || '') + ' ' + (n.motivo || ''))}
     ${linha('Emitida por', n.emitida_por)}${linha('Emitida em', new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }))}${linha('Aparelho', n.dispositivo)}
     ${n.status === 'cancelada' ? linha('Cancelada por', n.cancelada_por) + linha('Cancelada em', new Date(n.cancelada_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' })) + linha('Motivo', n.motivo_cancelamento) + linha('Protocolo do cancelamento', n.protocolo_cancelamento) : ''}</table>
-    <div class="acoes"><button type="button" class="btn azul" id="dXml">⬇️ Baixar XML</button>${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
+    <div class="acoes">${n.status !== 'rejeitada' ? '<button type="button" class="btn azul" id="dDanfe">📄 DANFE (PDF)</button>' : ''}<button type="button" class="btn" id="dXml">⬇️ Baixar XML</button>${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
     ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
     'Fechar', null, () => {
       $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('#dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
+      if ($('#dDanfe')) $('#dDanfe').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml').eq('id', n.id).single()); await danfePDF(x.xml); } catch (e) { falhou(e); } };
       $('#dXml').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml,xml_cancelamento,chave').eq('id', n.id).single()); if (!x.xml) return aviso('Esta nota não tem XML guardado.', true); baixarArquivo(`NFe${x.chave}.xml`, x.xml); if (x.xml_cancelamento) baixarArquivo(`NFe${x.chave}-cancelamento.xml`, x.xml_cancelamento); } catch (e) { falhou(e); } };
       if ($('#dCancelar')) $('#dCancelar').onclick = () => { $('.fundo-dialogo:last-child').remove(); cancelarNFe(n, depois); };
     });
@@ -1871,6 +1880,236 @@ async function cancelarNFe(n, depois) {
     aviso('NF-e cancelada. Cancelamento registrado.'); depois && depois();
   } catch (e) { falhou(e); }
 }
+// ---------- Emissão de NF-e (modelo 55, MEI, SEFAZ-BA) ----------
+// A nota é montada aqui; o programa HIGIVARO-NFe (no PC, com o certificado instalado no Windows) assina e envia à SEFAZ-BA.
+// MEI: CRT 4, CSOSN 102 (ou 500 quando o ICMS já foi pago por substituição); em 2026 o MEI não informa o grupo IBS/CBS.
+const TPAG = { 'Dinheiro': '01', 'Cartão de crédito': '03', 'Cartão de débito': '04', 'A prazo (fiado)': '05', 'Boleto': '15', 'Pix': '17', 'Transferência': '18' };
+const xmlTxt = (s, max = 60) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const nf2 = (n) => (Math.round((Number(n) || 0) * 100) / 100).toFixed(2);
+const nf4 = (n) => (Math.round((Number(n) || 0) * 10000) / 10000).toFixed(4);
+const dvChaveNFe = (c) => { let s = 0, p = 2; for (let i = c.length - 1; i >= 0; i--) { s += Number(c[i]) * p; p = p === 9 ? 2 : p + 1; } const r = s % 11; return r < 2 ? 0 : 11 - r; };
+const gtinValido = (g) => { g = soDig(g); if (![8, 12, 13, 14].includes(g.length)) return false; const d = [...g].map(Number), dv = d.pop(); const s = d.reverse().reduce((t, x, i) => t + x * (i % 2 ? 1 : 3), 0); return (10 - (s % 10)) % 10 === dv; };
+const dispositivo = () => { const ua = navigator.userAgent; const so = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'outro'; const nav = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'navegador'; return so + ' · ' + nav; };
+
+async function proximoNumeroNFe(cfg) {
+  const amb = cfg.ambiente === '1' ? '1' : '2', serie = Number(cfg.serie) || 1;
+  const u = await ok(sb.from('nfe').select('numero').eq('ambiente', amb).eq('serie', serie).in('status', ['autorizada', 'cancelada']).order('numero', { ascending: false }).limit(1));
+  return Math.max(Number(cfg.proximo) || 1, (Number(u[0]?.numero) || 0) + 1);
+}
+// Código IBGE do município pelo nome (API pública do IBGE).
+async function codigoMunicipio(nome, uf) {
+  try {
+    const l = await (await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`)).json();
+    const alvo = semAcento(nome).trim(); const m = l.find((x) => semAcento(x.nome) === alvo); return m ? String(m.id) : '';
+  } catch { return ''; }
+}
+// Destinatário: última NF-e do cliente > cadastro do CNPJ (Receita + SEFAZ-BA) > preenchimento manual. Sempre conferido numa janela.
+async function dadosDestinatario(v) {
+  const doc = soDig(v.client_doc);
+  const d = { doc, nome: v.client_name || '', ie: '', ind: doc.length === 14 ? '9' : '9', logradouro: '', numero: '', complemento: '', bairro: '', cMun: '', municipio: '', uf: 'BA', cep: '', fone: soDig(v.client_phone), email: v.client_email || '', final: true };
+  let fonte = '';
+  if (doc) {
+    try {
+      const ult = await ok(sb.from('nfe').select('xml').eq('cliente_doc', doc).not('xml', 'is', null).order('emitida_em', { ascending: false }).limit(1));
+      if (ult[0]?.xml) {
+        const x = new DOMParser().parseFromString(ult[0].xml, 'text/xml'), de = x.getElementsByTagNameNS('*', 'dest')[0];
+        const t = (n) => de?.getElementsByTagNameNS('*', n)[0]?.textContent || '';
+        if (de) { Object.assign(d, { logradouro: t('xLgr'), numero: t('nro'), complemento: t('xCpl'), bairro: t('xBairro'), cMun: t('cMun'), municipio: t('xMun'), uf: t('UF') || 'BA', cep: t('CEP'), ie: t('IE'), ind: t('indIEDest') || d.ind }); fonte = 'última NF-e deste cliente'; }
+      }
+    } catch { /* segue */ }
+  }
+  if (!fonte && doc.length === 14) {
+    try {
+      const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + doc);
+      if (r.ok) { const j = await r.json(); Object.assign(d, { nome: j.razao_social || d.nome, logradouro: [j.descricao_tipo_de_logradouro, j.logradouro].filter(Boolean).join(' '), numero: j.numero || 'S/N', complemento: j.complemento || '', bairro: j.bairro || '', cMun: String(j.codigo_municipio_ibge || ''), municipio: j.municipio || '', uf: j.uf || 'BA', cep: soDig(j.cep) }); fonte = 'cadastro do CNPJ na Receita'; }
+    } catch { /* segue */ }
+    if (d.uf === 'BA') {
+      try { const c = await assinadorNFe('/cadastro', { cnpj: doc, uf: 'BA' }); const cad = (c.cadastros || []).find((x) => x.situacao === '1'); if (cad?.IE) { d.ie = cad.IE; d.ind = '1'; d.final = false; fonte += ' + IE na SEFAZ-BA'; } } catch { /* sem IE */ }
+    }
+  }
+  const campo = (k, r, w = 1, extra = '') => `<div style="flex:${w} 1 ${w * 100}px"><label>${r}</label><input id="dd_${k}" value="${esc(d[k] ?? '')}" ${extra}></div>`;
+  return dialogo(`<h2 style="margin-top:0">Destinatário da NF-e</h2><p style="color:var(--muted);margin-top:0">${fonte ? 'Dados preenchidos pelo ' + esc(fonte) + '. ' : ''}Confira antes de emitir.</p>
+    <div class="linha">${campo('doc', 'CPF ou CNPJ *', 1, 'inputmode="numeric"')}${campo('nome', 'Nome / Razão social *', 3)}</div>
+    <div class="linha"><div style="flex:2 1 200px"><label>Inscrição Estadual</label><select id="dd_ind"><option value="1" ${d.ind === '1' ? 'selected' : ''}>1 - Contribuinte do ICMS (tem IE)</option><option value="2" ${d.ind === '2' ? 'selected' : ''}>2 - Isento de IE</option><option value="9" ${d.ind === '9' ? 'selected' : ''}>9 - Não contribuinte</option></select></div>${campo('ie', 'Nº da IE', 1, 'inputmode="numeric"')}</div>
+    <div class="linha">${campo('logradouro', 'Logradouro *', 3)}${campo('numero', 'Número *')}${campo('complemento', 'Complemento', 2)}</div>
+    <div class="linha">${campo('bairro', 'Bairro *', 2)}${campo('municipio', 'Município *', 2)}${campo('uf', 'UF *', 1, 'maxlength="2"')}${campo('cep', 'CEP *', 1, 'inputmode="numeric"')}</div>
+    <div class="linha">${campo('cMun', 'Cód. IBGE do município *', 1, 'inputmode="numeric"')}${campo('fone', 'Telefone', 1, 'inputmode="tel"')}${campo('email', 'E-mail', 2)}</div>
+    <div class="linha"><div><label>Consumidor final?</label><select id="dd_final"><option value="1" ${d.final ? 'selected' : ''}>Sim (usa os produtos)</option><option value="0" ${d.final ? '' : 'selected'}>Não (vai revender)</option></select></div>
+      <div><label>Venda</label><select id="dd_pres"><option value="1">Presencial (no balcão)</option><option value="9">Com entrega / pelo WhatsApp</option></select></div></div>`,
+    'Continuar',
+    () => {
+      const g = (k) => String($('#dd_' + k).value || '').trim();
+      const r = { doc: soDig(g('doc')), nome: g('nome'), ind: g('ind'), ie: soDig(g('ie')), logradouro: g('logradouro'), numero: g('numero') || 'S/N', complemento: g('complemento'), bairro: g('bairro'), municipio: g('municipio'), uf: g('uf').toUpperCase(), cep: soDig(g('cep')), cMun: soDig(g('cMun')), fone: soDig(g('fone')), email: g('email'), final: g('final') === '1', pres: g('pres') };
+      const falta = [];
+      if (![11, 14].includes(r.doc.length)) falta.push('CPF/CNPJ'); if (r.nome.length < 2) falta.push('nome'); if (!r.logradouro) falta.push('logradouro'); if (!r.bairro) falta.push('bairro');
+      if (!r.municipio) falta.push('município'); if (r.uf.length !== 2) falta.push('UF'); if (r.cep.length !== 8) falta.push('CEP (8 números)'); if (r.cMun.length !== 7) falta.push('código IBGE (7 números)');
+      if (r.ind === '1' && !r.ie) falta.push('nº da IE');
+      if (falta.length) { aviso('Falta: ' + falta.join(', '), true); return undefined; }
+      if (r.uf !== 'BA') { aviso('Por enquanto o sistema emite só para clientes da Bahia. Para outro estado, fale com o contador (há regras de diferencial de alíquota).', true); return undefined; }
+      return r;
+    },
+    () => {
+      $('.fundo-dialogo:last-child .dialogo').classList.add('largo');
+      const buscaIbge = async () => { if (soDig($('#dd_cMun').value).length === 7 || !$('#dd_municipio').value.trim()) return; const c = await codigoMunicipio($('#dd_municipio').value, ($('#dd_uf').value || 'BA').toUpperCase()); if (c) $('#dd_cMun').value = c; };
+      $('#dd_municipio').addEventListener('change', buscaIbge); $('#dd_uf').addEventListener('change', buscaIbge); buscaIbge();
+      $('#dd_ind').onchange = () => { if ($('#dd_ind').value === '1') $('#dd_final').value = '0'; };
+    });
+}
+// Monta o XML da NF-e 4.00 (sem assinatura) e devolve a chave e os totais.
+function montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb }) {
+  const serie = Number(cfg.serie) || 1, dh = dhBahia(), aamm = dh.slice(2, 4) + dh.slice(5, 7), cnpj = '69959700000104';
+  let cNF; do { cNF = String(Math.floor(Math.random() * 1e8)).padStart(8, '0'); } while (cNF === String(numero).padStart(8, '0'));
+  const base = '29' + aamm + cnpj + '55' + String(serie).padStart(3, '0') + String(numero).padStart(9, '0') + '1' + cNF;
+  const cDV = dvChaveNFe(base), chave = base + cDV;
+  const indPres = dest.pres === '9' ? '9' : '1';
+  let vProd = 0, vDesc = 0;
+  const dets = itens.map((it, k) => {
+    const p = pm[it.product_id] || {};
+    const q = Number(it.quantity) || 0, vu = Number(it.unit_price) || 0, vp = Math.round(q * vu * 100) / 100, ds = Math.round((Number(it.discount_value) || 0) * 100) / 100;
+    vProd += vp; vDesc += ds;
+    const csosn = String(p.cst || '102'), orig = String(p.origin ?? '0');
+    let cfop = soDig(p.cfop) || '5102'; if (csosn === '500' && cfop === '5102') cfop = '5405';
+    const ean = gtinValido(p.ean) ? soDig(p.ean) : 'SEM GTIN', un = xmlTxt(it.unit || 'UN', 6) || 'UN';
+    const icms = ['102', '103', '300', '400'].includes(csosn) ? `<ICMSSN102><orig>${orig}</orig><CSOSN>${csosn}</CSOSN></ICMSSN102>` : csosn === '500' ? `<ICMSSN500><orig>${orig}</orig><CSOSN>500</CSOSN></ICMSSN500>` : `<ICMSSN900><orig>${orig}</orig><CSOSN>900</CSOSN></ICMSSN900>`;
+    return `<det nItem="${k + 1}"><prod><cProd>${xmlTxt(it.code || p.code || String(k + 1), 60)}</cProd><cEAN>${ean}</cEAN><xProd>${xmlTxt(it.description, 120)}</xProd><NCM>${soDig(p.ncm)}</NCM>${soDig(p.cest).length === 7 ? `<CEST>${soDig(p.cest)}</CEST>` : ''}<CFOP>${cfop}</CFOP><uCom>${un}</uCom><qCom>${nf4(q)}</qCom><vUnCom>${nf4(vu)}</vUnCom><vProd>${nf2(vp)}</vProd><cEANTrib>${ean}</cEANTrib><uTrib>${un}</uTrib><qTrib>${nf4(q)}</qTrib><vUnTrib>${nf4(vu)}</vUnTrib>${ds > 0 ? `<vDesc>${nf2(ds)}</vDesc>` : ''}<indTot>1</indTot></prod>`
+      + `<imposto><ICMS>${icms}</ICMS><PIS><PISOutr><CST>99</CST><vBC>0.00</vBC><pPIS>0.0000</pPIS><vPIS>0.00</vPIS></PISOutr></PIS><COFINS><COFINSOutr><CST>99</CST><vBC>0.00</vBC><pCOFINS>0.0000</pCOFINS><vCOFINS>0.00</vCOFINS></COFINSOutr></COFINS></imposto></det>`;
+  });
+  vProd = Math.round(vProd * 100) / 100; vDesc = Math.round(vDesc * 100) / 100; const vNF = Math.round((vProd - vDesc) * 100) / 100;
+  const ender = (o, tag) => `<${tag}><xLgr>${xmlTxt(o.logradouro, 60)}</xLgr><nro>${xmlTxt(o.numero || 'S/N', 60)}</nro>${o.complemento ? `<xCpl>${xmlTxt(o.complemento, 60)}</xCpl>` : ''}<xBairro>${xmlTxt(o.bairro, 60)}</xBairro><cMun>${o.cMun}</cMun><xMun>${xmlTxt(o.municipio, 60)}</xMun><UF>${o.uf || 'BA'}</UF><CEP>${soDig(o.cep)}</CEP><cPais>1058</cPais><xPais>BRASIL</xPais>${soDig(o.fone).length >= 6 ? `<fone>${soDig(o.fone).slice(0, 14)}</fone>` : ''}</${tag}>`;
+  const nomeDest = amb === '2' ? 'NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL' : xmlTxt(dest.nome, 60);
+  const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest.email || '');
+  const tPag = TPAG[v.payment_method] || '99', recebido = v.payment_status === 'recebido';
+  const prazo = !recebido && v.due_date && String(v.due_date).slice(0, 10) >= hoje();
+  const xml = `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe versao="4.00" Id="NFe${chave}">`
+    + `<ide><cUF>29</cUF><cNF>${cNF}</cNF><natOp>VENDA DE MERCADORIA</natOp><mod>55</mod><serie>${serie}</serie><nNF>${numero}</nNF><dhEmi>${dh}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${cfg.cMun || '2903201'}</cMunFG><tpImp>1</tpImp><tpEmis>1</tpEmis><cDV>${cDV}</cDV><tpAmb>${amb}</tpAmb><finNFe>1</finNFe><indFinal>${dest.final ? 1 : 0}</indFinal><indPres>${indPres}</indPres>${indPres === '9' ? '<indIntermed>0</indIntermed>' : ''}<procEmi>0</procEmi><verProc>HIGIVARO 1.0</verProc></ide>`
+    + `<emit><CNPJ>${cnpj}</CNPJ><xNome>${xmlTxt(cfg.razao || emp.name || 'HIGIVARO', 60)}</xNome><xFant>HIGIVARO</xFant>${ender(cfg, 'enderEmit')}<IE>${soDig(cfg.ie)}</IE><CRT>4</CRT></emit>`
+    + `<dest>${dest.doc.length === 14 ? `<CNPJ>${dest.doc}</CNPJ>` : `<CPF>${dest.doc}</CPF>`}<xNome>${nomeDest}</xNome>${ender(dest, 'enderDest')}<indIEDest>${dest.ind}</indIEDest>${dest.ind === '1' ? `<IE>${dest.ie}</IE>` : ''}${emailOk ? `<email>${xmlTxt(dest.email, 60)}</email>` : ''}</dest>`
+    + `<autXML><CNPJ>${soDig(cfg.contador) .length === 14 ? soDig(cfg.contador) : '13937073000156'}</CNPJ></autXML>`
+    + dets.join('')
+    + `<total><ICMSTot><vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson><vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST><vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet><vProd>${nf2(vProd)}</vProd><vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>${nf2(vDesc)}</vDesc><vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol><vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro><vNF>${nf2(vNF)}</vNF></ICMSTot></total>`
+    + `<transp><modFrete>9</modFrete></transp>`
+    + (prazo ? `<cobr><fat><nFat>${numero}</nFat><vOrig>${nf2(vProd)}</vOrig><vDesc>${nf2(vDesc)}</vDesc><vLiq>${nf2(vNF)}</vLiq></fat><dup><nDup>001</nDup><dVenc>${String(v.due_date).slice(0, 10)}</dVenc><vDup>${nf2(vNF)}</vDup></dup></cobr>` : '')
+    + `<pag><detPag><indPag>${prazo ? 1 : 0}</indPag><tPag>${tPag}</tPag>${tPag === '99' ? '<xPag>OUTROS</xPag>' : ''}<vPag>${nf2(vNF)}</vPag>${['03', '04'].includes(tPag) ? '<card><tpIntegra>2</tpIntegra></card>' : ''}</detPag></pag>`
+    + `<infAdic><infCpl>${xmlTxt('DOCUMENTO EMITIDO POR MEI - NAO GERA DIREITO A CREDITO FISCAL DE ICMS E IPI. VENDA N ' + v.number + (v.observations ? '. ' + v.observations : ''), 2000)}</infCpl></infAdic>`
+    + (soDig(cfg.fone).length >= 6 ? `<infRespTec><CNPJ>${cnpj}</CNPJ><xContato>${xmlTxt(cfg.razao || 'HIGIVARO', 60)}</xContato><email>${xmlTxt(emp.email || 'higivaroadm@gmail.com', 60)}</email><fone>${soDig(cfg.fone).slice(0, 14)}</fone></infRespTec>` : '')
+    + `</infNFe></NFe>`;
+  return { xml, chave, vNF, vProd, vDesc };
+}
+// Fluxo completo: confere tudo, monta, envia pelo programa do PC, registra (o banco manda o e-mail) e oferece o DANFE.
+async function emitirNFe(v, depois) {
+  try {
+    const emp = await ok(sb.from('company_settings').select('*').eq('id', 1).single()), cfg = emp.nfe_config || {};
+    if (!cfg.ie || !cfg.logradouro || !cfg.cMun || !cfg.razao) return aviso('Preencha e salve os dados fiscais em Admin › NF-e antes de emitir.', true);
+    const amb = cfg.ambiente === '1' ? '1' : '2';
+    const ja = await ok(sb.from('nfe').select('numero').eq('sale_id', v.id).eq('status', 'autorizada').limit(1));
+    if (ja.length) return aviso(`Esta venda já tem a NF-e nº ${ja[0].numero} autorizada.`, true);
+    await assinadorNFe('/status', {});
+    const itens = await ok(sb.from('sale_items').select('*').eq('sale_id', v.id).order('description'));
+    const ids = [...new Set(itens.map((i) => i.product_id).filter(Boolean))];
+    const prods = ids.length ? await ok(sb.from('products').select('id,code,ncm,cest,cfop,cst,origin,ean').in('id', ids)) : [];
+    const pm = Object.fromEntries(prods.map((p) => [p.id, p]));
+    const semNcm = itens.filter((i) => soDig(pm[i.product_id]?.ncm).length !== 8);
+    const csosnRuim = itens.filter((i) => pm[i.product_id] && !['102', '103', '300', '400', '500', '900'].includes(String(pm[i.product_id].cst || '102')));
+    if (semNcm.length || csosnRuim.length) return dialogo(`<h2 style="margin-top:0">Ajuste os produtos antes de emitir</h2>
+      ${semNcm.length ? `<p><b>Sem NCM (8 números)</b> — cadastre na aba Tributos do produto:</p><ul>${semNcm.map((i) => `<li>${esc(i.code || '')} · ${esc(i.description)}</li>`).join('')}</ul>` : ''}
+      ${csosnRuim.length ? `<p><b>CSOSN não usado pelo MEI</b> — use 102 (ou 500 se o ICMS já veio pago por substituição):</p><ul>${csosnRuim.map((i) => `<li>${esc(i.description)}</li>`).join('')}</ul>` : ''}
+      <p class="dica">O NCM vem na nota de compra do fornecedor (ou confirme com o contador).</p>`, 'Entendi');
+    const dest = await dadosDestinatario(v); if (!dest) return;
+    const numero = await proximoNumeroNFe(cfg);
+    const m = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb });
+    const okEmitir = await dialogo(`<h2 style="margin-top:0">Emitir NF-e nº ${numero}${amb === '2' ? ' <span class="selo devolvida">TESTE</span>' : ''}</h2>
+      <p><b>${esc(dest.nome)}</b> · ${esc(formatarDoc(dest.doc))}<br>${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · <b>${brl(m.vNF)}</b>${m.vDesc ? ' (desconto ' + brl(m.vDesc) + ')' : ''}</p>
+      ${amb === '2' ? '<p class="dica">Ambiente de TESTE: a nota não tem valor fiscal.</p>' : '<p class="dica">Ambiente de PRODUÇÃO: a nota tem valor fiscal.</p>'}`, 'Emitir agora');
+    if (!okEmitir) return;
+    aviso('Enviando a NF-e para a SEFAZ-BA…');
+    const r = await assinadorNFe('/nfe/enviar', { amb, xml: m.xml });
+    const autorizada = ['100', '150'].includes(String(r.cStat));
+    const reg = { sale_id: v.id, ambiente: amb, serie: Number(cfg.serie) || 1, numero, chave: m.chave, status: autorizada ? 'autorizada' : 'rejeitada', cstat: String(r.cStat || r.loteStat || ''), motivo: r.xMotivo || r.loteMotivo || '', protocolo: r.protocolo || null, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, dispositivo: dispositivo(), xml: autorizada ? r.xmlAutorizado : (r.xmlAssinado || m.xml) };
+    try { await ok(sb.rpc('registrar_nfe', { p: reg })); } catch (e) { if (autorizada) await dialogo(`<h2 style="margin-top:0">⚠️ NF-e autorizada, mas não registrada</h2><p>A SEFAZ autorizou a nota nº ${numero}, mas o sistema não conseguiu gravar o registro (${esc(e.message)}). Baixe o XML agora e me avise.</p>`, 'Baixar XML', () => baixarArquivo(`NFe${m.chave}.xml`, r.xmlAutorizado)); }
+    if (autorizada) {
+      aviso('NF-e autorizada e registrada.');
+      const acao = await dialogo(`<h2 style="margin-top:0">✅ NF-e nº ${numero} autorizada</h2><p>Protocolo ${esc(r.protocolo || '')}<br>${esc(dest.nome)} · <b>${brl(m.vNF)}</b></p><p style="color:var(--muted)">O administrador recebeu o e-mail de aviso.</p>`, '📄 DANFE (PDF)', () => 'danfe');
+      if (acao === 'danfe') danfePDF(r.xmlAutorizado).catch(falhou);
+    } else {
+      await dialogo(`<h2 style="margin-top:0">❌ A SEFAZ recusou a NF-e</h2><p><b>${esc(reg.cstat)} – ${esc(reg.motivo)}</b></p><p class="dica">Corrija o que a mensagem indica (produto, cliente ou dados fiscais) e emita de novo. A tentativa ficou registrada em Notas fiscais › NF-e emitidas.</p>`, 'Entendi');
+    }
+    depois && depois();
+  } catch (e) { falhou(e); }
+}
+
+// ---------- DANFE (PDF) a partir do XML autorizado ----------
+// Código de barras CODE-128C da chave de acesso.
+const C128 = '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112'.split(' ');
+function barrasCode128C(digitos) {
+  const vals = [105]; for (let i = 0; i < digitos.length; i += 2) vals.push(Number(digitos.substr(i, 2)));
+  const chk = vals.reduce((s, x, i) => s + x * (i || 1), 0) % 103; vals.push(chk, 106);
+  return vals.map((x) => C128[x]).join('');
+}
+async function danfePDF(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const um = (pai, n) => (pai || doc).getElementsByTagNameNS('*', n)[0];
+  const t = (pai, n) => um(pai, n)?.textContent || '';
+  const inf = um(null, 'infNFe'), ide = um(inf, 'ide'), emit = um(inf, 'emit'), dest = um(inf, 'dest'), tot = um(inf, 'ICMSTot'), prot = um(null, 'infProt');
+  const chave = (inf.getAttribute('Id') || '').replace('NFe', ''), homolog = t(ide, 'tpAmb') === '2';
+  const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const M = 6, L = 198; let y = M;
+  const brlX = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const caixa = (x, yy, w, h, rot, val, o = {}) => {
+    pdf.setDrawColor(0); pdf.setLineWidth(0.2); pdf.rect(x, yy, w, h);
+    if (rot) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(5.5); pdf.setTextColor(60); pdf.text(rot.toUpperCase(), x + 1, yy + 2.6); }
+    if (val != null && val !== '') { pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(o.s || 8); pdf.setTextColor(0); const linhas = pdf.splitTextToSize(String(val), w - 2); pdf.text(o.a === 'right' ? linhas[0] : linhas.slice(0, o.max || 1), o.a === 'right' ? x + w - 1 : x + 1, yy + (o.dy || h - 1.6), o.a === 'right' ? { align: 'right' } : undefined); }
+  };
+  const titulo = (txt) => { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(0); pdf.text(txt, M, y + 2.6); y += 3.4; };
+  const fmtDoc = (c) => formatarDoc(c), dataHora = (s) => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).replace(',', '') : '';
+  // Canhoto
+  caixa(M, y, L - 42, 7, '', `RECEBEMOS DE ${t(emit, 'xNome')} OS PRODUTOS CONSTANTES DA NOTA FISCAL INDICADA AO LADO. EMISSÃO: ${dataHora(t(ide, 'dhEmi')).slice(0, 10)} · DESTINATÁRIO: ${t(dest, 'xNome')} · VALOR TOTAL: R$ ${brlX(t(tot, 'vNF'))}`, { s: 6, dy: 4.5, max: 2 });
+  caixa(M, y + 7, 40, 8, 'Data de recebimento', ''); caixa(M + 40, y + 7, L - 82, 8, 'Identificação e assinatura do recebedor', '');
+  caixa(M + L - 42, y, 42, 15, '', ''); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10); pdf.text('NF-e', M + L - 21, y + 5, { align: 'center' }); pdf.setFontSize(8); pdf.text(`Nº ${t(ide, 'nNF').padStart(9, '0').replace(/(\d{3})(\d{3})(\d{3})/, '$1.$2.$3')}`, M + L - 21, y + 9.5, { align: 'center' }); pdf.text(`SÉRIE ${t(ide, 'serie')}`, M + L - 21, y + 13, { align: 'center' });
+  y += 17; pdf.setLineDashPattern([1, 1], 0); pdf.line(M, y - 1, M + L, y - 1); pdf.setLineDashPattern([], 0);
+  // Cabeçalho: emitente | DANFE | chave
+  const hE = 34; caixa(M, y, 82, hE, '', '');
+  const logo = await carregarLogo(); if (logo) { try { pdf.addImage(logo, 'PNG', M + 2, y + 3, 22, 22); } catch { /* sem logo */ } }
+  const ee = um(emit, 'enderEmit');
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.text(pdf.splitTextToSize(t(emit, 'xNome'), 54), M + 26, y + 7);
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.text(pdf.splitTextToSize(`${t(ee, 'xLgr')}, ${t(ee, 'nro')}${t(ee, 'xCpl') ? ' - ' + t(ee, 'xCpl') : ''} - ${t(ee, 'xBairro')}\n${t(ee, 'xMun')} - ${t(ee, 'UF')} · CEP ${t(ee, 'CEP').replace(/(\d{5})(\d{3})/, '$1-$2')}${t(ee, 'fone') ? '\nFone: ' + t(ee, 'fone') : ''}`, 54), M + 26, y + 17);
+  caixa(M + 82, y, 34, hE, '', ''); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(12); pdf.text('DANFE', M + 99, y + 6, { align: 'center' });
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6); pdf.text(['Documento Auxiliar da', 'Nota Fiscal Eletrônica'], M + 99, y + 9.5, { align: 'center' });
+  pdf.setFontSize(7); pdf.text(['0 - ENTRADA', '1 - SAÍDA'], M + 85, y + 17); pdf.rect(M + 106, y + 14.5, 6, 5); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10); pdf.text(t(ide, 'tpNF'), M + 109, y + 18.4, { align: 'center' });
+  pdf.setFontSize(8); pdf.text(`Nº ${t(ide, 'nNF').padStart(9, '0').replace(/(\d{3})(\d{3})(\d{3})/, '$1.$2.$3')}`, M + 99, y + 25, { align: 'center' }); pdf.text(`SÉRIE ${t(ide, 'serie')}`, M + 99, y + 29, { align: 'center' }); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.text('FOLHA 1/1', M + 99, y + 32.5, { align: 'center' });
+  const xC = M + 116, wC = L - 116; caixa(xC, y, wC, hE, '', '');
+  const barras = barrasCode128C(chave), mods = [...barras].reduce((s, c) => s + Number(c), 0), mw = (wC - 6) / mods; let xb = xC + 3; pdf.setFillColor(0);
+  [...barras].forEach((c, i) => { const w = Number(c) * mw; if (i % 2 === 0) pdf.rect(xb, y + 2, w, 12, 'F'); xb += w; });
+  caixa(xC, y + 15, wC, 8, 'Chave de acesso', chave.replace(/(\d{4})/g, '$1 ').trim(), { b: true, s: 7.5 });
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.text(pdf.splitTextToSize('Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora', wC - 4), xC + wC / 2, y + 27, { align: 'center' });
+  y += hE;
+  caixa(M, y, 116, 8, 'Natureza da operação', t(ide, 'natOp')); caixa(M + 116, y, L - 116, 8, 'Protocolo de autorização de uso', prot ? `${t(prot, 'nProt')} - ${dataHora(t(prot, 'dhRecbto'))}` : 'NÃO AUTORIZADA'); y += 8;
+  caixa(M, y, 66, 8, 'Inscrição estadual', t(emit, 'IE')); caixa(M + 66, y, 66, 8, 'Insc. estadual do subst. trib.', ''); caixa(M + 132, y, L - 132, 8, 'CNPJ', fmtDoc(t(emit, 'CNPJ'))); y += 10;
+  // Destinatário
+  const ed = um(dest, 'enderDest'); titulo('DESTINATÁRIO / REMETENTE');
+  caixa(M, y, 118, 8, 'Nome / razão social', t(dest, 'xNome')); caixa(M + 118, y, 48, 8, 'CNPJ / CPF', fmtDoc(t(dest, 'CNPJ') || t(dest, 'CPF'))); caixa(M + 166, y, L - 166, 8, 'Data da emissão', dataHora(t(ide, 'dhEmi')).slice(0, 10)); y += 8;
+  caixa(M, y, 96, 8, 'Endereço', `${t(ed, 'xLgr')}, ${t(ed, 'nro')}${t(ed, 'xCpl') ? ' - ' + t(ed, 'xCpl') : ''}`); caixa(M + 96, y, 46, 8, 'Bairro / distrito', t(ed, 'xBairro')); caixa(M + 142, y, 24, 8, 'CEP', t(ed, 'CEP').replace(/(\d{5})(\d{3})/, '$1-$2')); caixa(M + 166, y, L - 166, 8, 'Data da saída', ''); y += 8;
+  caixa(M, y, 70, 8, 'Município', t(ed, 'xMun')); caixa(M + 70, y, 34, 8, 'Fone / fax', t(ed, 'fone')); caixa(M + 104, y, 12, 8, 'UF', t(ed, 'UF')); caixa(M + 116, y, 50, 8, 'Inscrição estadual', t(dest, 'IE')); caixa(M + 166, y, L - 166, 8, 'Hora da saída', ''); y += 10;
+  // Fatura
+  const dups = [...doc.getElementsByTagNameNS('*', 'dup')];
+  if (dups.length) { titulo('FATURA / DUPLICATAS'); caixa(M, y, L, 8, '', dups.map((d) => `Nº ${t(d, 'nDup')}  venc. ${t(d, 'dVenc').split('-').reverse().join('/')}  R$ ${brlX(t(d, 'vDup'))}`).join('     '), { s: 7.5 }); y += 10; }
+  // Cálculo do imposto
+  titulo('CÁLCULO DO IMPOSTO'); const w6 = L / 6;
+  [['Base de cálculo do ICMS', 'vBC'], ['Valor do ICMS', 'vICMS'], ['Base de cálc. ICMS S.T.', 'vBCST'], ['Valor do ICMS subst.', 'vST'], ['Valor do PIS', 'vPIS'], ['Valor total dos produtos', 'vProd']].forEach(([r, k], i) => caixa(M + i * w6, y, w6, 8, r, brlX(t(tot, k)), { a: 'right' })); y += 8;
+  [['Valor do frete', 'vFrete'], ['Valor do seguro', 'vSeg'], ['Desconto', 'vDesc'], ['Outras despesas', 'vOutro'], ['Valor total do IPI', 'vIPI'], ['Valor total da nota', 'vNF']].forEach(([r, k], i) => caixa(M + i * w6, y, w6, 8, r, brlX(t(tot, k)), { a: 'right', b: k === 'vNF' })); y += 10;
+  titulo('TRANSPORTADOR / VOLUMES TRANSPORTADOS'); caixa(M, y, 120, 8, 'Razão social', ''); caixa(M + 120, y, L - 120, 8, 'Frete por conta', '9 - SEM OCORRÊNCIA DE TRANSPORTE', { s: 7 }); y += 10;
+  // Itens
+  titulo('DADOS DOS PRODUTOS / SERVIÇOS');
+  const dets = [...doc.getElementsByTagNameNS('*', 'det')];
+  pdf.autoTable({ startY: y, margin: { left: M, right: M, bottom: 40 }, theme: 'grid',
+    head: [['CÓDIGO', 'DESCRIÇÃO DO PRODUTO', 'NCM/SH', 'CSOSN', 'CFOP', 'UN', 'QUANT.', 'V. UNIT.', 'V. TOTAL', 'BC ICMS', 'V. ICMS', 'ALÍQ.']],
+    body: dets.map((d) => { const p = um(d, 'prod'), ic = um(d, 'ICMS'); return [t(p, 'cProd'), t(p, 'xProd'), t(p, 'NCM'), (t(ic, 'orig') || '0') + t(ic, 'CSOSN'), t(p, 'CFOP'), t(p, 'uCom'), Number(t(p, 'qCom')).toLocaleString('pt-BR', { maximumFractionDigits: 4 }), brlX(t(p, 'vUnCom')), brlX(t(p, 'vProd')), '0,00', '0,00', '0,00']; }),
+    styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 0.8, lineColor: 0, lineWidth: 0.1, textColor: 0 }, headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 5.8 },
+    columnStyles: { 0: { cellWidth: 15 }, 2: { cellWidth: 14 }, 3: { cellWidth: 10 }, 4: { cellWidth: 9 }, 5: { cellWidth: 8 }, 6: { cellWidth: 14, halign: 'right' }, 7: { cellWidth: 15, halign: 'right' }, 8: { cellWidth: 16, halign: 'right' }, 9: { cellWidth: 11, halign: 'right' }, 10: { cellWidth: 11, halign: 'right' }, 11: { cellWidth: 9, halign: 'right' } } });
+  y = pdf.lastAutoTable.finalY + 2; if (y > 255) { pdf.addPage(); y = M; }
+  titulo('DADOS ADICIONAIS'); caixa(M, y, 140, 30, 'Informações complementares', t(inf, 'infCpl'), { s: 7, dy: 6, max: 8 }); caixa(M + 140, y, L - 140, 30, 'Reservado ao fisco', '');
+  if (homolog) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(40); pdf.setTextColor(210, 40, 40); pdf.text('SEM VALOR FISCAL', 105, 170, { align: 'center', angle: 25 }); pdf.setFontSize(12); pdf.text('NF-e emitida em ambiente de homologação (teste)', 105, 182, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
+  pdf.save(`DANFE-${t(ide, 'nNF')}-${chave.slice(-6)}.pdf`);
+}
 // E-mail de boas-vindas (função "boas-vindas" no Supabase, envia pelo Gmail da HIGIVARO). Nunca trava o cadastro se falhar.
 async function enviarBoasVindas(userId) {
   try {
@@ -1889,17 +2128,12 @@ async function chamarNFe(dados) {
   if (!data?.ok) throw new Error(data?.erro || 'falha na função de NF-e');
   return data;
 }
-const CAMPOS_FISCAIS = [['ie', 'Inscrição Estadual *', 1], ['logradouro', 'Logradouro *', 3], ['numero', 'Número *', 1], ['complemento', 'Complemento', 2], ['bairro', 'Bairro *', 2], ['cMun', 'Cód. município IBGE *', 1], ['municipio', 'Município *', 2], ['cep', 'CEP *', 1], ['fone', 'Telefone', 1]];
+const CAMPOS_FISCAIS = [['razao', 'Razão social (como na SEFAZ) *', 4], ['ie', 'Inscrição Estadual *', 1], ['logradouro', 'Logradouro *', 3], ['numero', 'Número *', 1], ['complemento', 'Complemento', 2], ['bairro', 'Bairro *', 2], ['cMun', 'Cód. município IBGE *', 1], ['municipio', 'Município *', 2], ['cep', 'CEP *', 1], ['fone', 'Telefone', 1]];
 function formNFeAdmin(e) {
   const c = e.nfe_config || {}, v = (k, pad = '') => esc(c[k] ?? pad);
-  return `<div class="card"><h2 style="margin-top:0">1. Certificado digital no cofre</h2>
-    <p style="color:var(--muted);margin-top:0">O certificado A1 da HIGIVARO fica guardado no cofre do servidor (Supabase), protegido pelo 2FA. Nem o navegador nem os usuários têm acesso a ele; o sistema só pede ao servidor para assinar a nota.</p>
-    <div class="acoes"><button class="btn azul" id="vCert">Verificar certificado</button></div><p id="rCert" class="dica" hidden></p>
-    <h3 style="margin:16px 0 4px">Guardar ou trocar o certificado</h3>
-    <p style="color:var(--muted);margin:0 0 6px;font-size:13px">Escolha o arquivo <b>.pfx</b> da HIGIVARO e digite a senha. O servidor confere se é o certificado da empresa e guarda criptografado no cofre. Use também quando renovar o certificado.</p>
-    <div class="linha"><div style="flex:2 1 260px"><label>Arquivo do certificado (.pfx)</label><input type="file" id="arqPfx" accept=".pfx,.p12,application/x-pkcs12"></div>
-      <div style="flex:1 1 200px"><label>Senha do certificado</label><input type="password" id="senhaPfx" autocomplete="new-password"></div></div>
-    <div class="acoes"><button class="btn pri" id="gCert">🔒 Guardar certificado no cofre</button></div></div>
+  return `<div class="card"><h2 style="margin-top:0">1. Certificado digital neste computador</h2>
+    <p style="color:var(--muted);margin-top:0">A NF-e é assinada pelo programa <b>HIGIVARO-NFe</b>, que roda neste computador e usa o certificado A1 da HIGIVARO instalado no Windows. O certificado não sai do computador. Cada PC que for emitir precisa ter o certificado instalado e o programa aberto.</p>
+    <div class="acoes"><button class="btn azul" id="vCert">Verificar certificado e programa</button></div><p id="rCert" class="dica" hidden></p></div>
   <div class="card"><h2 style="margin-top:0">2. Conexão com a SEFAZ-BA</h2>
     <div class="acoes"><button class="btn" id="tHom">Testar ambiente de TESTE</button><button class="btn" id="tProd">Testar PRODUÇÃO</button></div><p id="rSefaz" class="dica" hidden></p></div>
   <div class="card"><h2 style="margin-top:0">3. Dados fiscais da HIGIVARO (saem na NF-e)</h2>
@@ -1913,34 +2147,21 @@ function formNFeAdmin(e) {
 function ligarNFeAdmin(e) {
   const mostra = (id, html, erro) => { const p = $(id); p.hidden = false; p.innerHTML = html; p.style.background = erro ? '#fdecea' : ''; p.style.color = erro ? 'var(--red)' : ''; };
   const ocupado = async (b, fn) => { b.disabled = true; const t = b.textContent; b.textContent = 'Aguarde…'; try { await fn(); } finally { b.disabled = false; b.textContent = t; } };
-  $('#vCert').onclick = (ev) => ocupado(ev.target, async () => { try { const r = await chamarNFe({ acao: 'certificado' }); mostra('#rCert', `✅ Certificado encontrado no cofre: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`); } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); } });
-  $('#gCert').onclick = (ev) => ocupado(ev.target, async () => {
-    const f = $('#arqPfx').files[0], senha = $('#senhaPfx').value;
-    if (!f) return aviso('Escolha o arquivo .pfx do certificado.', true);
-    if (!senha) return aviso('Digite a senha do certificado.', true);
-    if (f.size > 50000) return aviso('Este arquivo é grande demais para ser um certificado .pfx.', true);
-    try {
-      const bytes = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      const r = await chamarNFe({ acao: 'guardar', pfx: btoa(bin), senha });
-      mostra('#rCert', `✅ Certificado guardado no cofre: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`);
-      aviso('Certificado guardado no cofre.');
-    } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); }
-    finally { $('#senhaPfx').value = ''; $('#arqPfx').value = ''; S.sujo = false; }
-  });
-  const testar = (amb, b) => ocupado(b, async () => { try { const r = await chamarNFe({ acao: 'status', amb }); mostra('#rSefaz', `${r.cStat === '107' ? '✅' : '⚠️'} ${amb === '1' ? 'PRODUÇÃO' : 'TESTE'}: ${esc(r.cStat)} – ${esc(r.xMotivo)}`, r.cStat !== '107'); } catch (er) { mostra('#rSefaz', '❌ ' + esc(er.message), true); } });
+  $('#vCert').onclick = (ev) => ocupado(ev.target, async () => { try { const r = await assinadorNFe('/status', {}); mostra('#rCert', `✅ Programa aberto e certificado encontrado: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`); } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); } });
+  const testar = (amb, b) => ocupado(b, async () => { try { const r = await assinadorNFe('/sefaz/status', { amb }); mostra('#rSefaz', `${r.cStat === '107' ? '✅' : '⚠️'} ${amb === '1' ? 'PRODUÇÃO' : 'TESTE'}: ${esc(r.cStat)} – ${esc(r.xMotivo)}`, r.cStat !== '107'); } catch (er) { mostra('#rSefaz', '❌ ' + esc(er.message), true); } });
   $('#tHom').onclick = (ev) => testar('2', ev.target); $('#tProd').onclick = (ev) => testar('1', ev.target);
   $('#bCad').onclick = (ev) => ocupado(ev.target, async () => {
     try {
-      const r = await chamarNFe({ acao: 'cadastro', cnpj: '69959700000104' });
+      const r = await assinadorNFe('/cadastro', { cnpj: '69959700000104', uf: 'BA' });
       const c = (r.cadastros || [])[0]; if (!c) return mostra('#rCad', `⚠️ ${esc(r.cStat)} – ${esc(r.xMotivo)}`, true);
-      const f = $('#ffis'); ['ie', 'logradouro', 'numero', 'complemento', 'bairro', 'cMun', 'municipio', 'cep'].forEach((k) => { const val = k === 'ie' ? c.IE : c[k]; if (val) f[k].value = val; }); S.sujo = true;
+      const f = $('#ffis'); ['razao', 'ie', 'logradouro', 'numero', 'complemento', 'bairro', 'cMun', 'municipio', 'cep'].forEach((k) => { const val = k === 'ie' ? c.IE : k === 'razao' ? c.nome : c[k]; if (val) f[k].value = val; }); S.sujo = true;
       mostra('#rCad', `✅ ${esc(c.nome)} · IE <b>${esc(c.IE)}</b> · situação ${c.situacao === '1' ? 'habilitada' : esc(c.situacao)}${c.regime ? ' · ' + esc(c.regime) : ''}. Confira os campos abaixo e clique em Salvar.`, c.situacao !== '1');
     } catch (er) { mostra('#rCad', '❌ ' + esc(er.message), true); }
   });
   $('#ffis').onsubmit = async (ev) => {
     ev.preventDefault(); const d = Object.fromEntries(new FormData(ev.target)); Object.keys(d).forEach((k) => (d[k] = String(d[k]).trim()));
     d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1);
-    const falta = [['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
+    const falta = [['razao', 'razão social'], ['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
     if (falta.length) return aviso('Preencha: ' + falta.map((x) => x[1]).join(', '), true);
     if (d.ambiente === '1' && !confirm('Mudar para PRODUÇÃO? As notas emitidas passam a ter valor fiscal.')) return;
     try { await ok(sb.from('company_settings').update({ nfe_config: d }).eq('id', 1)); S.empresa = { ...S.empresa, nfe_config: d }; aviso('Dados fiscais salvos.'); } catch (er) { falhou(er); }
