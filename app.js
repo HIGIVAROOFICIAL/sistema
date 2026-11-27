@@ -201,7 +201,7 @@ function telaLogin(modo = 'entrar') {
   app.innerHTML = `<div class="auth"><div class="logo"><img src="logo.png" alt="HIGIVARO"></div>
   <div class="card"><h1>${titulo}</h1><form id="f">
     ${modo === 'cadastro' ? '<label>Seu nome</label><input name="nome" required>' : ''}
-    <label>E-mail</label><input name="email" type="email" required autocomplete="email">
+    ${modo === 'entrar' ? '<label>Nº do usuário ou e-mail</label><input name="email" required autocomplete="username" placeholder="Ex.: 8">' : '<label>E-mail</label><input name="email" type="email" required autocomplete="email">'}
     ${modo !== 'esqueci' ? `<label>Senha</label><input name="senha" type="password" minlength="6" required autocomplete="${modo === 'cadastro' ? 'new-password' : 'current-password'}">` : ''}
     <div class="acoes"><button class="btn pri grande">${titulo}</button></div></form>
     <div class="acoes">
@@ -212,7 +212,12 @@ function telaLogin(modo = 'entrar') {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target)); const b = $('#f button'); b.disabled = true;
     try {
-      if (modo === 'entrar') { await ok(sb.auth.signInWithPassword({ email: f.email, password: f.senha })); rotear(); }
+      if (modo === 'entrar') {
+        // Número de usuário (definido pelo administrador) vira o e-mail de login.
+        let login = String(f.email).trim();
+        if (/^[0-9]{1,5}$/.test(login)) { const em = await ok(sb.rpc('email_do_login', { p_num: Number(login) })); if (!em) throw new Error('usuário nº ' + login + ' não encontrado'); login = em; }
+        await ok(sb.auth.signInWithPassword({ email: login, password: f.senha })); rotear();
+      }
       if (modo === 'cadastro') {
         const r = await ok(sb.auth.signUp({ email: f.email, password: f.senha, options: { data: { full_name: f.nome }, emailRedirectTo: location.origin + location.pathname } }));
         if (r.session) rotear(); else app.innerHTML = '<div class="card auth"><h1>Confira seu e-mail</h1><p>Enviamos um link de confirmação. Depois de confirmar, entre com seu e-mail e senha.</p><a class="btn" href="#/">Voltar</a></div>';
@@ -1323,8 +1328,8 @@ async function telaAdmin(modo) {
   <div class="acoes"><button class="btn pri">Salvar empresa</button></div></form></div>
   <div ${modo === 'usuarios' ? '' : 'hidden'}><div class="acoes" style="margin-top:0"><button class="btn pri" id="novoUsuario">＋ Novo usuário</button></div><div id="formUsuario"></div></div>
   <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Use <b>＋ Novo usuário</b> para cadastrar com e-mail e senha temporária: no primeiro acesso a pessoa é obrigada a criar a senha pessoal. Em <b>Pode acessar</b>, marque as áreas de cada vendedor (administrador acessa tudo; Notas fiscais, Despesas e Admin são só do administrador).</p>
-  <div class="tabela"><table><thead><tr><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th><th></th></tr></thead><tbody>
-  ${us.map((u) => `<tr data-id="${u.id}"><td>${esc(u.full_name)}</td><td class="esconde-cel">${esc(u.email)}</td>
+  <div class="tabela"><table><thead><tr><th>Nº login</th><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th><th></th></tr></thead><tbody>
+  ${us.map((u) => `<tr data-id="${u.id}"><td><input type="number" min="1" max="99999" data-num="${u.id}" value="${u.login_number ?? ''}" style="width:80px" placeholder="—"></td><td>${esc(u.full_name)}</td><td class="esconde-cel">${esc(u.email)}</td>
     <td><select data-c="access_status" ${u.id === S.perfil.id ? 'disabled' : ''}><option ${u.access_status === 'liberado' ? 'selected' : ''}>liberado</option><option ${u.access_status === 'aguardando' ? 'selected' : ''}>aguardando</option></select></td>
     <td><select data-c="role" ${u.id === S.perfil.id ? 'disabled' : ''}><option value="user" ${u.role === 'user' ? 'selected' : ''}>vendedor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select></td>
     <td><input type="checkbox" data-c="active" ${u.active ? 'checked' : ''} ${u.id === S.perfil.id ? 'disabled' : ''} style="width:auto"></td>
@@ -1333,9 +1338,16 @@ async function telaAdmin(modo) {
   </tbody></table></div></div>`;
   // Senha temporária: 8 caracteres fáceis de ditar (sem 0/O, 1/l), para o admin repassar ao usuário.
   const gerarSenha = () => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; const r = crypto.getRandomValues(new Uint32Array(8)); return [...r].map((n) => c[n % c.length]).join(''); };
+  const proxNum = Math.max(0, ...us.map((u) => Number(u.login_number) || 0)) + 1;
+  // Nº de login de cada usuário: o administrador define; não pode repetir.
+  $$('[data-num]').forEach((inp) => (inp.onchange = async () => {
+    const v = inp.value ? Number(inp.value) : null;
+    if (v != null && us.some((u) => u.id !== inp.dataset.num && Number(u.login_number) === v)) { aviso('O nº ' + v + ' já é de outro usuário.', true); return; }
+    try { await ok(sb.from('profiles').update({ login_number: v }).eq('id', inp.dataset.num)); aviso('Nº de login atualizado.'); const u = us.find((x) => x.id === inp.dataset.num); if (u) u.login_number = v; } catch (err) { falhou(err); }
+  }));
   $('#novoUsuario').onclick = () => {
     $('#formUsuario').innerHTML = `<div class="card"><h2 style="margin-top:0">Novo usuário</h2><form id="fu">
-      <div class="linha"><div style="flex:2 1 240px"><label>Nome *</label><input name="nome" required></div><div style="flex:2 1 240px"><label>E-mail (será o login) *</label><input name="email" type="email" required autocomplete="off"></div></div>
+      <div class="linha"><div style="flex:2 1 240px"><label>Nome *</label><input name="nome" required></div><div style="flex:2 1 240px"><label>E-mail *</label><input name="email" type="email" required autocomplete="off"></div><div style="flex:0 1 140px"><label>Nº de login *</label><input name="numero" type="number" min="1" max="99999" required value="${proxNum}"></div></div>
       <div class="linha"><div><label>Senha temporária * (mínimo 6)</label><div class="linha" style="gap:6px"><input name="senha" id="senhaTemp" required minlength="6" autocomplete="new-password"><button type="button" class="btn" id="gerar" style="flex:0 0 auto">Gerar</button></div></div>
         <div style="flex:0 1 200px"><label>Tipo</label><select name="tipo" id="tipoU"><option value="user">Vendedor</option><option value="admin">Administrador</option></select></div></div>
       <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" checked> ${rot}</label>`).join('')}</div></div>
@@ -1349,10 +1361,13 @@ async function telaAdmin(modo) {
       const perms = f.getAll('perm'); const tipo = f.get('tipo');
       if (tipo !== 'admin' && !perms.length) return aviso('Marque pelo menos uma área que o usuário pode acessar.', true);
       try {
-        await ok(sb.rpc('admin_criar_usuario', { p_nome: f.get('nome'), p_email: f.get('email'), p_senha: f.get('senha'), p_role: tipo, p_perms: perms }));
+        const numero = Number(f.get('numero'));
+        if (us.some((u) => Number(u.login_number) === numero)) return aviso('O nº ' + numero + ' já é de outro usuário.', true);
+        const uid = await ok(sb.rpc('admin_criar_usuario', { p_nome: f.get('nome'), p_email: f.get('email'), p_senha: f.get('senha'), p_role: tipo, p_perms: perms }));
+        await ok(sb.from('profiles').update({ login_number: numero }).eq('id', uid));
         const email = f.get('email'), senha = f.get('senha');
         aviso('Usuário criado.'); await telaAdmin(modo);
-        await dialogo(`<h2 style="margin-top:0">Usuário criado ✅</h2><p>Passe estes dados para a pessoa:</p><p style="font-size:17px">Endereço: <b>${esc(location.origin + location.pathname)}</b><br>E-mail: <b>${esc(email)}</b><br>Senha temporária: <b>${esc(senha)}</b></p><p class="dica">No primeiro acesso ela vai criar a senha pessoal.</p>`, 'Entendi');
+        await dialogo(`<h2 style="margin-top:0">Usuário criado ✅</h2><p>Passe estes dados para a pessoa:</p><p style="font-size:17px">Endereço: <b>${esc(location.origin + location.pathname)}</b><br>Nº do usuário: <b>${numero}</b> (ou o e-mail ${esc(email)})<br>Senha temporária: <b>${esc(senha)}</b></p><p class="dica">No primeiro acesso ela vai criar a senha pessoal.</p>`, 'Entendi');
       } catch (err) { falhou(err); }
     };
     $('#fu').nome.focus();
