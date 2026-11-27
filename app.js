@@ -2129,93 +2129,135 @@ async function cancelarNFSe(n, depois) {
   } catch (e) { falhou(e); }
 }
 
-// PDF da NFS-e: o oficial (DANFSe gerado pelo Sistema Nacional) quando o governo entrega; senão, o nosso no mesmo leiaute.
+// PDF da NFS-e: o oficial (gerado pelo Sistema Nacional) quando o governo ainda entrega; senão, o nosso no leiaute oficial.
 async function pdfNFSe(n, cfg) {
-  if (n.chave && n.status !== 'rascunho') {
+  if (n.chave && n.status === 'autorizada') {
     try {
       const r = await assinadorNFe('/nfse/danfse', { amb: n.ambiente, chave: n.chave });
       if (r.pdfB64) { const a = document.createElement('a'); a.href = 'data:application/pdf;base64,' + r.pdfB64; a.download = `NFSe-${n.numero || n.ndps}.pdf`; a.click(); return 'oficial'; }
     } catch { /* gera o nosso */ }
   }
-  await danfsePDF(n.xml, cfg); return 'proprio';
+  await danfsePDF(n.xml, cfg, { cancelada: n.status === 'cancelada' }); return 'proprio';
 }
-let qrLib;
+let qrLib, logoNfse;
 const carregarQR = () => qrLib || (qrLib = new Promise((ok, erro) => { if (window.qrcode) return ok(); const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'; s.onload = ok; s.onerror = () => { qrLib = null; erro(new Error('não carregou o QR code')); }; document.head.appendChild(s); }));
+const carregarLogoNfse = () => logoNfse || (logoNfse = fetch('logo-nfse.png').then((r) => r.blob()).then((b) => new Promise((ok) => { const f = new FileReader(); f.onload = () => ok(f.result); f.readAsDataURL(b); })).catch(() => (logoNfse = null)));
 
-// Leiaute do DANFSe do Sistema Nacional (cabeçalho com QR code, emitente, tomador, intermediário, serviço, tributação, totais).
-async function danfsePDF(xml, cfg = {}) {
+// DANFSe v2.0 — Nota Técnica SE/CGNFS-e nº 008/2026 (Anexo I). Medidas em mm: margem 3, largura útil 204, 4 colunas de 50,9.
+// Espelho (DPS ainda não enviada): mesmo modelo, com a marcação de que a nota NÃO foi enviada ao Sistema Nacional.
+async function danfsePDF(xml, cfg = {}, opc = {}) {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const um = (pai, k) => (pai || doc).getElementsByTagNameNS('*', k)[0], t = (pai, k) => um(pai, k)?.textContent || '';
-  const inf = um(null, 'infNFSe'), dps = um(null, 'infDPS'), toma = um(dps, 'toma'), emit = um(inf, 'emit'), espelho = !inf;
-  const teste = (inf ? t(inf, 'ambGer') : t(dps, 'tpAmb')) === '2';
+  const um = (pai, k) => (pai === null ? doc : pai)?.getElementsByTagNameNS('*', k)[0], t = (pai, k) => um(pai, k)?.textContent || '';
+  const inf = um(null, 'infNFSe'), dps = um(null, 'infDPS'), prest = um(dps, 'prest'), toma = um(dps, 'toma'), interm = um(dps, 'interm'), emit = um(inf, 'emit'), espelho = !inf;
+  const tpAmb = t(dps, 'tpAmb'), teste = tpAmb === '2';
   const chave = inf ? (inf.getAttribute('Id') || '').replace('NFS', '') : '';
-  const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-  const M = 8, L = 194, VERM = [200, 30, 30]; let y = M;
-  const dataHora = (s) => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).replace(',', '') : '-';
-  const vv = (x) => x ? 'R$ ' + Number(x).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
-  const docFmt = (p) => { const c = t(p, 'CNPJ') || t(p, 'CPF'); return c ? formatarDoc(c) : '-'; };
-  // Linha de campos: cada célula [rótulo, valor, largura em colunas (de 4)], com altura ajustada ao texto.
-  const linha = (cels, o = {}) => {
-    const W = L / 4; let x = M, h = 8.5;
-    pdf.setFontSize(7.5); cels.forEach(([, val, c = 1]) => { const n = pdf.splitTextToSize(String(val || '-'), c * W - 2).length; h = Math.max(h, 5.2 + n * 3.2); });
-    cels.forEach(([rot, val, c = 1]) => {
-      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(5.8); pdf.setTextColor(70); pdf.text(rot, x + 1, y + 2.6);
-      pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(...(o.cor || [0, 0, 0])); pdf.text(pdf.splitTextToSize(String(val || '-'), c * W - 2), x + 1, y + 5.6);
-      x += c * W;
-    });
-    pdf.setTextColor(0); y += h;
+  const [jsPDF, logo] = [window.jspdf.jsPDF, await carregarLogoNfse()];
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+  const X0 = 3, W = 204, C = W / 4, cx = (i) => X0 + i * C, VERM = [220, 0, 0], CINZA = 242;
+  const pt = (p) => p * 0.3528; // pontos → mm
+  const dh = (s) => s ? new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).replace(',', '') : '-';
+  const vv = (x) => x !== '' && x != null ? 'R$ ' + Number(x).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+  const fDoc = (p) => { const c = t(p, 'CNPJ') || t(p, 'CPF') || t(p, 'NIF'); return c ? (/^\d+$/.test(c) ? formatarDoc(c) : c) : '-'; };
+  const corta = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
+  const hLinha = (y) => { pdf.setDrawColor(0); pdf.setLineWidth(pt(0.5)); pdf.line(X0, y, X0 + W, y); };
+  // célula: rótulo (6 pt negrito) + conteúdo (7 pt). o.id = rótulo da identificação (7 pt, maiúsculo).
+  const cel = (i, y, rot, val, o = {}) => {
+    const x = cx(i), w = (o.span || 1) * C;
+    if (o.cinza) { pdf.setFillColor(CINZA); pdf.rect(x, y, w, o.h || 6.7, 'F'); }
+    if (rot) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(o.id || o.bloco ? 7 : 6); pdf.setTextColor(0); pdf.text(rot, x + 1, y + (o.id || o.bloco ? 2.9 : 2.5)); }
+    if (val != null) { pdf.setFont('helvetica', o.b ? 'bold' : 'normal'); pdf.setFontSize(7); pdf.setTextColor(...(o.cor || [0, 0, 0])); pdf.text(pdf.splitTextToSize(String(val === '' ? '-' : val), w - 2).slice(0, o.max || 1), x + 1, y + (rot ? 5.6 : 3.2)); pdf.setTextColor(0); }
   };
-  const secao = (txt) => { pdf.setDrawColor(150); pdf.setLineWidth(0.3); pdf.line(M, y, M + L, y); y += 0.8; pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.5); pdf.setTextColor(0); pdf.text(txt, M + 1, y + 3); y += 4.2; };
-  // Cabeçalho
-  pdf.setFillColor(20, 70, 140); pdf.roundedRect(M, y, 22, 13, 1.5, 1.5, 'F'); pdf.setTextColor(255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11); pdf.text('NFS-e', M + 11, y + 8.3, { align: 'center' });
-  pdf.setTextColor(0); pdf.setFontSize(12); pdf.text('DANFSe v1.0', M + 26, y + 5.5); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.text('Documento Auxiliar da NFS-e', M + 26, y + 10);
-  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.text(`Prefeitura de ${(t(inf, 'xLocEmi') || cfg.municipio || 'Barreiras').toUpperCase()}`, M + 95, y + 5.5, { align: 'center' }); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.text('Sistema Nacional da NFS-e', M + 95, y + 10, { align: 'center' });
-  const qx = M + L - 24;
-  if (!espelho && chave) {
+  let y = 3;
+  // ---- Cabeçalho (cinza) ----
+  pdf.setFillColor(CINZA); pdf.rect(X0, y, W, 11.6, 'F');
+  if (logo) pdf.addImage(logo, 'PNG', X0 + 1.9, y + 1.4, 40, 8.1);
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.text('DANFSe v2.0', X0 + 102, y + 4.2, { align: 'center' }); pdf.text('Documento Auxiliar da NFS-e', X0 + 102, y + 7.6, { align: 'center' });
+  if (teste || espelho) { pdf.setTextColor(...VERM); pdf.text(espelho ? 'ESPELHO - NFS-e NÃO ENVIADA - SEM VALOR FISCAL' : 'NFS-e SEM VALIDADE JURÍDICA', X0 + 102, y + 10.9, { align: 'center' }); pdf.setTextColor(0); }
+  const munEmi = `${t(inf, 'xLocEmi') || cfg.municipio || 'Barreiras'} / ${t(emit, 'UF') || 'BA'}`;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.text(`Município: ${munEmi}`, cx(3) + 1, y + 3.6);
+  pdf.setFontSize(6); pdf.text(`Ambiente Gerador: ${espelho ? '-' : t(inf, 'ambGer') === '1' ? 'Prefeitura' : 'Sistema Nacional da NFS-e'}`, cx(3) + 1, y + 6.8); pdf.text(`Tipo de Ambiente: ${tpAmb === '1' ? 'Produção' : 'Produção Restrita (Homologação)'}`, cx(3) + 1, y + 9.4);
+  y += 11.6; hLinha(y);
+  // ---- Identificação (3 colunas + QR à direita) ----
+  const yId = y;
+  cel(0, y, 'CHAVE DE ACESSO DA NFS-E', espelho ? 'NÃO ENVIADA AO SISTEMA NACIONAL' : chave, { id: 1, span: 3, b: espelho, cor: espelho ? VERM : undefined }); y += 6.7;
+  cel(0, y, 'NÚMERO DA NFS-E', espelho ? '-' : t(inf, 'nNFSe'), { id: 1 }); cel(1, y, 'COMPETÊNCIA DA NFS-E', dataBR(t(dps, 'dCompet')), { id: 1 }); cel(2, y, 'DATA E HORA DA EMISSÃO DA NFS-E', espelho ? '-' : dh(t(inf, 'dhProc')), { id: 1 }); y += 6.7;
+  cel(0, y, 'NÚMERO DA DPS', t(dps, 'nDPS'), { id: 1 }); cel(1, y, 'SÉRIE DA DPS', String(Number(t(dps, 'serie')) || t(dps, 'serie')), { id: 1 }); cel(2, y, 'DATA E HORA DA EMISSÃO DA DPS', dh(t(dps, 'dhEmi')), { id: 1 }); y += 6.7;
+  const EMIT = { 1: 'Prestador do Serviço', 2: 'Tomador do Serviço', 3: 'Intermediário do Serviço' }, FIN = { 0: 'NFS-e regular' };
+  cel(0, y, 'EMITENTE DA NFS-E', EMIT[t(dps, 'tpEmit') || '1'], { id: 1, cinza: 1 });
+  cel(1, y, 'SITUAÇÃO DA NFS-E', espelho ? 'NÃO ENVIADA (ESPELHO)' : opc.cancelada ? 'NFS-e Cancelada' : 'NFS-e Gerada', { id: 1, cor: espelho ? VERM : undefined, b: espelho });
+  cel(2, y, 'FINALIDADE', FIN[t(dps, 'finNFSe') || '0'] || 'NFS-e regular', { id: 1 }); y += 6.7;
+  // QR Code (X 17,48 cm / Y 1,67 cm; mínimo 1,52 cm) e texto de autenticidade
+  const qx = X0 + 174.8 - 3, qy = 3 + 16.7 - 3, qs = 16;
+  if (espelho) {
+    pdf.setDrawColor(...VERM); pdf.setLineWidth(0.4); pdf.rect(cx(3) + 4, yId + 2, C - 8, 22); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(...VERM);
+    pdf.text(['NFS-e NÃO ENVIADA', 'AO SISTEMA NACIONAL', 'SEM VALOR FISCAL'], cx(3) + C / 2, yId + 9, { align: 'center' }); pdf.setTextColor(0); pdf.setDrawColor(0);
+  } else {
     try {
-      await carregarQR(); const q = window.qrcode(0, 'M'); q.addData(`https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=${chave}`); q.make();
-      const n = q.getModuleCount(), s = 22 / n; pdf.setFillColor(0); for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) pdf.rect(qx + c * s, y + r * s, s, s, 'F');
-    } catch { /* sem QR: a chave basta */ }
-    pdf.setFontSize(5.5); pdf.setTextColor(60); pdf.text(pdf.splitTextToSize('A autenticidade desta NFS-e pode ser verificada pela leitura deste código QR ou pela consulta da chave de acesso no portal nacional da NFS-e', 44), qx - 46, y + 3); pdf.setTextColor(0);
+      await carregarQR(); const q = window.qrcode(0, 'M'); q.addData('https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=' + chave); q.make();
+      const n = q.getModuleCount(), s = qs / n; pdf.setFillColor(0); for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) pdf.rect(qx + c * s, qy + r * s, s, s, 'F');
+    } catch { /* sem QR, fica a chave */ }
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6); pdf.text(['A autenticidade desta NFS-e pode ser verificada', 'pela leitura deste código QR ou pela consulta da', 'chave de acesso no portal nacional da NFS-e'], cx(3) + 1, qy + qs + 2.4);
   }
-  y += 24;
-  if (espelho || teste) { pdf.setFillColor(253, 236, 234); pdf.rect(M, y, L, 7, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(...VERM); pdf.text(espelho ? 'ESPELHO - NFS-e NÃO ENVIADA AO SISTEMA NACIONAL - SEM VALOR FISCAL' : 'NFS-e EMITIDA EM AMBIENTE DE TESTE - SEM VALOR FISCAL', M + L / 2, y + 4.8, { align: 'center' }); pdf.setTextColor(0); y += 8.5; }
-  linha([['Chave de Acesso da NFS-e', espelho ? 'NÃO ENVIADA AO SISTEMA NACIONAL' : chave, 4]], { b: true, cor: espelho ? VERM : undefined });
-  linha([['Número da NFS-e', espelho ? '-' : t(inf, 'nNFSe')], ['Competência da NFS-e', dataBR(t(dps, 'dCompet'))], ['Data e Hora da emissão da NFS-e', espelho ? '-' : dataHora(t(inf, 'dhProc')), 2]]);
-  linha([['Número da DPS', t(dps, 'nDPS')], ['Série da DPS', String(Number(t(dps, 'serie')) || '')], ['Data e Hora da emissão da DPS', dataHora(t(dps, 'dhEmi')), 2]]);
-  // Emitente
-  secao('EMITENTE DA NFS-e    Prestador do Serviço');
-  const end = emit ? `${t(emit, 'xLgr')}, ${t(emit, 'nro')}${t(emit, 'xCpl') ? ', ' + t(emit, 'xCpl') : ''}, ${t(emit, 'xBairro')}` : `${cfg.logradouro || ''}, ${cfg.numero || ''}, ${cfg.bairro || ''}`;
-  linha([['CNPJ / CPF / NIF', formatarDoc('69959700000104')], ['Inscrição Municipal', t(um(dps, 'prest'), 'IM') || '-'], ['Telefone', t(emit, 'fone') || cfg.fone || '-', 2]]);
-  linha([['Nome / Nome Empresarial', t(emit, 'xNome') || cfg.razao || '', 2], ['E-mail', (t(emit, 'email') || '').toLowerCase() || '-', 2]]);
-  linha([['Endereço', end, 2], ['Município', `${t(inf, 'xLocEmi') || cfg.municipio || 'Barreiras'} - BA`], ['CEP', (t(emit, 'CEP') || cfg.cep || '').replace(/(\d{5})(\d{3})/, '$1-$2')]]);
-  linha([['Simples Nacional na Data de Competência', 'Optante - Microempreendedor Individual (MEI)', 2], ['Regime de Apuração Tributária pelo SN', '-', 2]]);
-  // Tomador
-  secao('TOMADOR DO SERVIÇO');
-  if (toma) {
-    linha([['CNPJ / CPF / NIF', docFmt(toma)], ['Inscrição Municipal', t(toma, 'IM') || '-'], ['Telefone', t(toma, 'fone') || '-', 2]]);
-    linha([['Nome / Nome Empresarial', t(toma, 'xNome'), 2], ['E-mail', t(toma, 'email') || '-', 2]]);
-  } else linha([['', 'TOMADOR NÃO IDENTIFICADO NA NFS-e', 4]], { b: true });
-  secao('INTERMEDIÁRIO DO SERVIÇO'); linha([['', 'NÃO IDENTIFICADO NA NFS-e', 4]]);
-  // Serviço
-  secao('SERVIÇO PRESTADO');
-  const ct = t(dps, 'cTribNac'), descCod = t(inf, 'xTribNac') || ((CODIGOS_SERVICO.find((c) => c[0] === ct) || [])[1] || '').replace(/^\d{2}\.\d{2}\.\d{2} · /, '');
-  linha([['Código de Tributação Nacional', `${ct.replace(/(\d{2})(\d{2})(\d{2})/, '$1.$2.$3')} - ${descCod}`, 2], ['Local da Prestação', `${t(inf, 'xLocPrestacao') || cfg.municipio || 'Barreiras'} - BA`], ['País da Prestação', '-']]);
-  linha([['Descrição do Serviço', t(dps, 'xDescServ'), 4]]);
-  // Tributação
-  secao('TRIBUTAÇÃO MUNICIPAL');
-  const vS = t(dps, 'vServ');
-  linha([['Tributação do ISSQN', 'Operação Tributável'], ['Município de Incidência do ISSQN', `${t(inf, 'xLocIncid') || cfg.municipio || 'Barreiras'} - BA`], ['Regime Especial de Tributação', 'Nenhum'], ['Retenção do ISSQN', 'Não Retido']]);
-  linha([['Valor do Serviço', vv(vS)], ['BC ISSQN', '-'], ['Alíquota Aplicada', '-'], ['ISSQN Apurado', '-']]);
-  secao('TRIBUTAÇÃO FEDERAL');
-  linha([['IRRF', '-'], ['Contribuição Previdenciária', '-'], ['CSLL', '-'], ['PIS / COFINS', '-']]);
-  secao('VALOR TOTAL DA NFS-e');
-  linha([['Valor do Serviço', vv(vS)], ['Desconto Incondicionado', '-'], ['ISSQN Retido', '-'], ['Valor Líquido da NFS-e', vv(t(inf, 'vLiq') || vS)]], { b: true });
-  secao('TOTAIS APROXIMADOS DOS TRIBUTOS');
-  linha([['Federais', '-'], ['Estaduais', '-'], ['Municipais', '-'], ['', '']]);
-  secao('INFORMAÇÕES COMPLEMENTARES');
-  linha([['', 'NFS-e emitida por MEI - Microempreendedor Individual. O ISSQN e os tributos federais são recolhidos mensalmente no DAS-MEI (Simples Nacional); não há destaque nem retenção de tributos nesta nota.' + (espelho ? ' ESPELHO PARA CONFERÊNCIA: esta nota ainda não foi enviada ao Sistema Nacional e não tem valor fiscal.' : ''), 4]]);
-  pdf.setDrawColor(150); pdf.line(M, y, M + L, y);
+  hLinha(y);
+  // ---- Blocos de pessoas ----
+  const SN = { 1: 'Não Optante', 2: 'Optante - Microempreendedor Individual (MEI)', 3: 'Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)' };
+  const REG = { 1: 'Regime de apuração dos tributos federais e municipal pelo SN', 2: 'Regime de apuração dos tributos federais pelo SN e ISSQN pela NFS-e', 3: 'Regime de apuração dos tributos federais e municipal pela NFS-e' };
+  const endereco = (p) => { const e = um(p, 'end') || um(p, 'enderNac'); if (!e) return '-'; return [t(e, 'xLgr'), t(e, 'nro'), t(e, 'xCpl'), t(e, 'xBairro')].filter(Boolean).join(', ') || '-'; };
+  const munP = (p, nomeMun) => { const e = um(p, 'end') || um(p, 'enderNac'); const cm = t(e, 'cMun'); return cm ? `${nomeMun || (cm === '2903201' ? 'Barreiras' : cm)} / ${t(e, 'UF') || 'BA'}` : '-'; };
+  const ibgeCep = (p) => { const e = um(p, 'end') || um(p, 'enderNac'); const cm = t(e, 'cMun'), cep = t(e, 'CEP'); return cm || cep ? `${cm || '-'} / ${cep ? cep.replace(/(\d{2})(\d{3})(\d{3})/, '$1.$2-$3') : '-'}` : '-'; };
+  const pessoa = (titulo, p, extra) => {
+    cel(0, y, titulo, null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'CNPJ / CPF / NIF', fDoc(p)); cel(2, y, 'Indicador Municipal (Inscrição)', t(p, 'IM') || '-'); cel(3, y, 'Telefone', t(p, 'fone') || '-'); y += 6.2;
+    cel(0, y, 'Nome / Nome Empresarial', corta(t(p, 'xNome'), 80), { span: 2 }); cel(2, y, 'Município / Sigla UF', extra?.mun || munP(p)); cel(3, y, 'Código IBGE / CEP', extra?.ibge || ibgeCep(p)); y += 6.2;
+    cel(0, y, 'Endereço', corta(extra?.end || endereco(p), 90), { span: 2 }); cel(2, y, 'E-mail', (t(p, 'email') || '-').toLowerCase(), { span: 2 }); y += 6.2;
+  };
+  // Prestador: os dados cadastrais vêm do grupo "emit" da NFS-e (no espelho, dos dados fiscais da empresa).
+  const pEmit = emit;
+  cel(0, y, 'PRESTADOR / FORNECEDOR', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'CNPJ / CPF / NIF', formatarDoc(t(prest, 'CNPJ') || '69959700000104')); cel(2, y, 'Indicador Municipal (Inscrição)', t(prest, 'IM') || '-'); cel(3, y, 'Telefone', t(pEmit, 'fone') || t(prest, 'fone') || cfg.fone || '-'); y += 6.2;
+  cel(0, y, 'Nome / Nome Empresarial', corta(t(pEmit, 'xNome') || cfg.razao || '', 80), { span: 2 }); cel(2, y, 'Município / Sigla UF', munEmi);
+  cel(3, y, 'Código IBGE / CEP', `${t(pEmit, 'cMun') || cfg.cMun || '2903201'} / ${(t(pEmit, 'CEP') || cfg.cep || '').replace(/(\d{2})(\d{3})(\d{3})/, '$1.$2-$3') || '-'}`); y += 6.2;
+  cel(0, y, 'Endereço', corta(pEmit ? endereco(pEmit) : [cfg.logradouro, cfg.numero, cfg.complemento, cfg.bairro].filter(Boolean).join(', '), 90), { span: 2 }); cel(2, y, 'E-mail', (t(pEmit, 'email') || t(prest, 'email') || '-').toLowerCase(), { span: 2 }); y += 6.2;
+  cel(0, y, 'Simples Nacional na Data de Competência', SN[t(prest, 'opSimpNac')] || '-', { span: 2 }); cel(2, y, 'Regime de Apuração Tributária pelo SN', REG[t(prest, 'regApTribSN')] || '-', { span: 2 }); y += 6.2;
+  hLinha(y);
+  if (toma) pessoa('TOMADOR / ADQUIRENTE', toma); else { cel(0, y, 'TOMADOR/ADQUIRENTE DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e', null, { bloco: 1, span: 4, cinza: 1, h: 5 }); y += 5; }
+  hLinha(y);
+  cel(0, y, 'O DESTINATÁRIO É O PRÓPRIO TOMADOR/ADQUIRENTE DA OPERAÇÃO', null, { bloco: 1, span: 4, cinza: 1, h: 5 }); y += 5; hLinha(y);
+  if (interm) pessoa('INTERMEDIÁRIO DA OPERAÇÃO', interm); else { cel(0, y, 'INTERMEDIÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e', null, { bloco: 1, span: 4, cinza: 1, h: 5 }); y += 5; }
+  hLinha(y);
+  // ---- Serviço prestado ----
+  const ct = t(dps, 'cTribNac'), cm = t(dps, 'cTribMun'), descCod = t(inf, 'xTribNac') || ((CODIGOS_SERVICO.find((c) => c[0] === ct) || [])[1] || '').replace(/^\d{2}\.\d{2}\.\d{2} · /, '');
+  cel(0, y, 'SERVIÇO PRESTADO', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'Código de Tributação Nacional / Municipal', `${ct.replace(/(\d{2})(\d{2})(\d{2})/, '$1.$2.$3')}${cm ? ' / ' + cm : ''}`); cel(2, y, 'Código da NBS', t(dps, 'cNBS') || '-');
+  cel(3, y, 'Local da Prestação / Sigla UF / País', `${t(inf, 'xLocPrestacao') || 'Barreiras'} / BA`); y += 6.2;
+  pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(90); pdf.text(pdf.splitTextToSize(descCod, W - 2).slice(0, 2), X0 + 1, y + 2.8); pdf.setTextColor(0); y += descCod.length > 150 ? 6.4 : 3.8;
+  // ---- Tributação (altura fixa; o que sobra vai para a descrição) ----
+  const ISS = { 1: 'Operação Tributável', 2: 'Imunidade', 3: 'Exportação de Serviço', 4: 'Não Incidência' }, RET = { 1: 'Não Retido', 2: 'Retido pelo Tomador', 3: 'Retido pelo Intermediário' }, REGESP = { 0: 'Nenhum', 1: 'Ato Cooperado', 2: 'Estimativa', 3: 'Microempresa Municipal', 4: 'Notário ou Registrador', 5: 'Profissional Autônomo', 6: 'Sociedade de Profissionais' };
+  const vS = t(dps, 'vServ'), vLiq = t(inf, 'vLiq') || vS, vIss = t(inf, 'vISSQN'), vBC = t(inf, 'vBC'), pAl = t(inf, 'pAliqAplic');
+  const resto = 297 - 3 - y - 6.2 * 9 - 26;
+  const descr = pdf.splitTextToSize(t(dps, 'xDescServ'), W - 2), hDesc = Math.max(18, resto);
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6); pdf.text('Descrição do Serviço', X0 + 1, y + 2.5); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.text(descr.slice(0, Math.floor((hDesc - 4) / 3)), X0 + 1, y + 5.6);
+  y += hDesc; hLinha(y);
+  cel(0, y, 'TRIBUTAÇÃO MUNICIPAL (ISSQN)', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'Tipo de Tributação do ISSQN', ISS[t(dps, 'tribISSQN')] || '-'); cel(2, y, 'Município / Sigla UF / País de Incidência do ISSQN', `${t(inf, 'xLocIncid') || 'Barreiras'} / BA`, { span: 2 }); y += 6.2;
+  cel(0, y, 'Regime Especial de Tributação do ISSQN', REGESP[t(prest, 'regEspTrib') || '0']); cel(1, y, 'Tipo de Imunidade do ISSQN', '-'); cel(2, y, 'Suspensão da Exigibilidade do ISSQN', 'Não'); cel(3, y, 'Número Processo Suspensão', '-'); y += 6.2;
+  cel(0, y, 'BC ISSQN', vv(vBC)); cel(1, y, 'Alíquota Aplicada', pAl ? pAl.replace('.', ',') + '%' : '-'); cel(2, y, 'Retenção do ISSQN', RET[t(dps, 'tpRetISSQN')] || '-'); cel(3, y, 'ISSQN Apurado', vv(vIss)); y += 6.2;
+  hLinha(y);
+  cel(0, y, 'TRIBUTAÇÃO FEDERAL (EXCETO CBS)', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'IRRF', vv(t(dps, 'vRetIRRF'))); cel(2, y, 'Contribuição Previdenciária - Retida', vv(t(dps, 'vRetCP'))); cel(3, y, 'Contribuições Sociais - Retidas', vv(t(dps, 'vRetCSLL'))); y += 6.2;
+  cel(0, y, 'PIS - Débito Apuração Própria', vv(t(dps, 'vPis'))); cel(1, y, 'COFINS - Débito Apuração Própria', vv(t(dps, 'vCofins'))); cel(2, y, 'Descrição Contrib. Sociais - Retidas', '-', { span: 2 }); y += 6.2;
+  hLinha(y);
+  cel(0, y, 'TRIBUTAÇÃO IBS / CBS', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'CST / cClassTrib', '-'); cel(2, y, 'Indicador de Operação / Código IBGE Incidência / Município Incidência / Sigla UF', '-', { span: 2 }); y += 6.2;
+  cel(0, y, 'Base de Cálculo Após Exclusões e Reduções', '-'); cel(1, y, 'Valor Total Apurado - IBS', '-'); cel(2, y, 'Valor Total Apurado - CBS', '-'); y += 6.2;
+  hLinha(y);
+  cel(0, y, 'VALOR TOTAL DA NFS-E', null, { bloco: 1, cinza: 1, h: 6.2 }); cel(1, y, 'VALOR DA OPERAÇÃO / SERVIÇO', vv(vS), { bloco: 1 }); cel(2, y, 'Desconto Incondicionado', vv(t(dps, 'vDescIncond'))); cel(3, y, 'Desconto Condicionado', vv(t(dps, 'vDescCond'))); y += 6.2;
+  cel(0, y, 'Total das Retenções (ISSQN / Federais)', vv(t(inf, 'vTotalRet'))); cel(1, y, 'VALOR LÍQUIDO DA NFS-e', vv(vLiq), { bloco: 1, b: 1 }); cel(2, y, 'Total do IBS/CBS', '-');
+  cel(3, y, 'VALOR LÍQUIDO DA NFS-e + IBS/CBS', vv(vLiq), { bloco: 1, b: 1, cinza: 1, h: 6.2 }); y += 6.2;
+  hLinha(y);
+  // ---- Informações complementares ----
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.text('INFORMAÇÕES COMPLEMENTARES', X0 + 1, y + 3);
+  const info = [t(dps, 'xInfComp'), t(inf, 'xOutInf')].filter(Boolean);
+  if (espelho) info.unshift('ESPELHO PARA CONFERÊNCIA: esta NFS-e ainda NÃO foi enviada ao Sistema Nacional da NFS-e e não tem valor fiscal. O número e a chave de acesso são definidos no envio.');
+  pdf.setFont('helvetica', espelho ? 'bold' : 'normal'); pdf.setFontSize(7); if (espelho) pdf.setTextColor(...VERM);
+  pdf.text(pdf.splitTextToSize(info.join('\n') || '-', W - 2), X0 + 1, y + 6.4); pdf.setTextColor(0);
+  // Borda da página (1 pt)
+  pdf.setLineWidth(pt(1)); pdf.setDrawColor(0); pdf.rect(X0, 3, W, 291);
+  if (opc.cancelada) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(80); pdf.setTextColor(166); pdf.text('CANCELADA', 105, 175, { align: 'center', angle: 35 }); pdf.setTextColor(0); }
   pdf.save(`${espelho ? 'ESPELHO-NFSe-DPS' + t(dps, 'nDPS') : 'NFSe-' + t(inf, 'nNFSe')}.pdf`);
 }
 
