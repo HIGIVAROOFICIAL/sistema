@@ -747,19 +747,52 @@ async function telaDespesas(modo) {
       <div class="kpi"><small>A pagar</small><strong>${brl(soma(abertas))}</strong></div><div class="kpi"><small>Vencidas</small><strong style="color:var(--red)">${brl(soma(venc))}</strong></div>`;
     const porCat = {}; ds.forEach((d) => (porCat[d.category] = (porCat[d.category] || 0) + Number(d.amount)));
     $('#cats').innerHTML = Object.keys(porCat).length ? `<div class="card" style="margin-top:12px"><b>Por categoria</b><div style="margin-top:8px">${Object.entries(porCat).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)"><span>${esc(c)}</span><b>${brl(v)}</b></div>`).join('')}</div></div>` : '';
-    $('#lista').innerHTML = ds.map((d) => `<tr class="clica" data-id="${d.id}"><td>${dataBR(d.due_date)}</td><td>${esc(d.description)}</td><td class="esconde-cel">${esc(d.category)}</td><td class="esconde-cel">${esc(d.supplier || '')}</td><td class="num"><b>${brl(d.amount)}</b></td><td>${seloDespesa(d)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma despesa neste filtro.</td></tr>';
+    $('#lista').innerHTML = ds.map((d) => `<tr class="clica" data-id="${d.id}"><td>${dataBR(d.due_date)}${d.original_due_date && d.original_due_date !== d.due_date ? `<br><small style="color:var(--muted)">dia útil (era ${dataBR(d.original_due_date)})</small>` : ''}</td><td>${esc(d.description)}</td><td class="esconde-cel">${esc(d.category)}</td><td class="esconde-cel">${esc(d.supplier || '')}</td><td class="num"><b>${brl(d.amount)}</b></td><td>${seloDespesa(d)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma despesa neste filtro.</td></tr>';
     $$('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formDespesa(ds.find((d) => d.id === tr.dataset.id), carregar)));
   };
   let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; $('#sit').onchange = carregar;
   $('#relatorio').onclick = () => pdfDespesas(atual, [$('#mes').value && 'Mês: ' + $('#mes').value.split('-').reverse().join('/'), $('#sit').selectedOptions[0].text, $('#busca').value.trim() && 'Filtro: ' + $('#busca').value.trim()].filter(Boolean).join(' • ')).catch(falhou);
   carregar();
 }
+// ---------- dias úteis ----------
+// Feriados nacionais (fixos e móveis, incluindo Carnaval e Corpus Christi, quando os bancos não abrem) + 2 de Julho (Bahia).
+function pascoa(ano) {
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  return new Date(ano, Math.floor((h + l - 7 * m + 114) / 31) - 1, ((h + l - 7 * m + 114) % 31) + 1);
+}
+const _feriados = {};
+function feriadosDoAno(ano) {
+  if (_feriados[ano]) return _feriados[ano];
+  const iso = (dt) => dt.toLocaleDateString('sv-SE'); const p = pascoa(ano); const mais = (n) => new Date(p.getFullYear(), p.getMonth(), p.getDate() + n);
+  const lista = { [`${ano}-01-01`]: 'Confraternização Universal', [`${ano}-04-21`]: 'Tiradentes', [`${ano}-05-01`]: 'Dia do Trabalho', [`${ano}-07-02`]: 'Independência da Bahia', [`${ano}-09-07`]: 'Independência do Brasil',
+    [`${ano}-10-12`]: 'Nossa Senhora Aparecida', [`${ano}-11-02`]: 'Finados', [`${ano}-11-15`]: 'Proclamação da República', [`${ano}-11-20`]: 'Consciência Negra', [`${ano}-12-25`]: 'Natal',
+    [iso(mais(-48))]: 'Carnaval', [iso(mais(-47))]: 'Carnaval', [iso(mais(-2))]: 'Sexta-feira Santa', [iso(mais(60))]: 'Corpus Christi' };
+  return (_feriados[ano] = lista);
+}
+// Se a data cair em sábado, domingo ou feriado, devolve o próximo dia útil (e o motivo).
+function proximoDiaUtil(iso) {
+  let dt = new Date(iso + 'T12:00:00'); const motivos = [];
+  for (let n = 0; n < 15; n++) {
+    const s = dt.toLocaleDateString('sv-SE'), fer = feriadosDoAno(dt.getFullYear())[s], dow = dt.getDay();
+    if (dow !== 0 && dow !== 6 && !fer) return { data: s, motivo: motivos[0] || '' };
+    motivos.push(fer || (dow === 6 ? 'sábado' : 'domingo')); dt.setDate(dt.getDate() + 1);
+  }
+  return { data: iso, motivo: '' };
+}
+// Datas de vencimento de uma despesa repetida: mesmo dia em cada mês (ou o último dia, se o mês for mais curto).
+function datasRepetidas(iso, n) {
+  const [y, m, dia] = iso.split('-').map(Number);
+  return [...Array(Math.max(1, n))].map((_, k) => { const ult = new Date(y, m - 1 + k + 1, 0).getDate(); return new Date(y, m - 1 + k, Math.min(dia, ult)).toLocaleDateString('sv-SE'); });
+}
 function formDespesa(d, depois, aoCancelar) {
   d = d || {};
   $('#form').innerHTML = `<div class="card"><h2 style="margin-top:0">${d.id ? 'Editar despesa' : 'Nova despesa'}</h2><form id="fd">
     <div class="linha"><div style="flex:2 1 260px"><label>Descrição</label><input name="description" required value="${esc(d.description)}" placeholder="Ex.: Aluguel do depósito, Compra Candeias NF 1234"></div>
     <div><label>Categoria</label><select name="category">${CATEGORIAS.map((c) => `<option ${c === (d.category || 'Outros') ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div>
-    <div class="linha"><div><label>Fornecedor / a quem pagar</label><input name="supplier" value="${esc(d.supplier)}"></div><div><label>Valor (R$)</label><input name="amount" required inputmode="decimal" value="${d.amount != null ? String(d.amount).replace('.', ',') : ''}"></div><div><label>Vencimento</label><input type="date" name="due_date" required value="${String(d.due_date || hoje()).slice(0, 10)}"></div></div>
+    <div class="linha"><div><label>Fornecedor / a quem pagar</label><input name="supplier" value="${esc(d.supplier)}"></div><div><label>Valor (R$)</label><input name="amount" required inputmode="decimal" value="${d.amount != null ? String(d.amount).replace('.', ',') : ''}"></div><div><label>Data de vencimento</label><input type="date" name="due_date" required value="${String(d.original_due_date || d.due_date || hoje()).slice(0, 10)}"></div></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" id="diaUtil" style="width:auto" ${d.business_day ? 'checked' : ''}> Pagamento somente em dia útil (se cair em sábado, domingo ou feriado, passa para o próximo dia útil)</label>
+    <p class="dica" id="infoDiaUtil" hidden></p>
     <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" id="pago" style="width:auto" ${d.status === 'pago' ? 'checked' : ''}> Já está paga</label>
     <div class="linha" id="boxPago"><div><label>Data do pagamento</label><input type="date" name="paid_at" value="${String(d.paid_at || hoje()).slice(0, 10)}"></div><div><label>Forma de pagamento</label><select name="payment_method">${FORMAS.map((f) => `<option ${f === d.payment_method ? 'selected' : ''}>${f}</option>`).join('')}</select></div></div>
     ${d.id ? '' : '<div class="linha"><div style="flex:0 1 260px"><label>Repetir nos próximos meses (ex.: aluguel)</label><select name="repetir"><option value="1">Não repetir</option>' + [2, 3, 6, 12].map((n) => `<option value="${n}">${n} meses (inclui este)</option>`).join('') + '</select></div></div>'}
@@ -778,18 +811,29 @@ function formDespesa(d, depois, aoCancelar) {
     });
   }
   const sinc = () => ($('#boxPago').hidden = !$('#pago').checked); $('#pago').onchange = sinc; sinc();
+  // Mostra na hora em que dia o pagamento vai ficar (e, nas repetidas, o ajuste de cada mês).
+  const infoUtil = () => {
+    const box = $('#infoDiaUtil'), venc = $('#fd').due_date.value, rep = Number($('#fd').repetir?.value || 1);
+    if (!$('#diaUtil').checked || !venc) { box.hidden = true; return; }
+    const datas = datasRepetidas(venc, rep).map((x) => ({ x, u: proximoDiaUtil(x) }));
+    const ajustadas = datas.filter((v) => v.u.data !== v.x);
+    box.hidden = false;
+    box.innerHTML = ajustadas.length ? `Ajustes para dia útil: ${ajustadas.slice(0, 6).map((v) => `${dataBR(v.x)} (${v.u.motivo}) → <b>${dataBR(v.u.data)}</b>`).join('; ')}${ajustadas.length > 6 ? ` e mais ${ajustadas.length - 6}` : ''}.` : `${dataBR(venc)} já é dia útil${rep > 1 ? ' (e os outros meses também)' : ''}.`;
+  };
+  $('#diaUtil').onchange = infoUtil; $('#fd').due_date.addEventListener('change', infoUtil); if ($('#fd').repetir) $('#fd').repetir.addEventListener('change', infoUtil); infoUtil();
   $('#cancela').onclick = () => (aoCancelar ? aoCancelar() : ($('#form').innerHTML = ''));
   if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir a despesa "' + d.description + '"?')) return; try { await ok(sb.from('expenses').delete().eq('id', d.id)); aviso('Despesa excluída.'); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
   $('#fd').onsubmit = async (e) => {
     e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); const pago = $('#pago').checked; const rep = Number(f.repetir || 1); delete f.repetir;
-    const reg = { description: f.description.trim(), category: f.category, supplier: f.supplier.trim() || null, amount: num(f.amount), due_date: f.due_date, notes: f.notes.trim() || null,
+    const util = $('#diaUtil').checked;
+    const ajusta = (iso) => ({ original_due_date: iso, due_date: util ? proximoDiaUtil(iso).data : iso });
+    const reg = { description: f.description.trim(), category: f.category, supplier: f.supplier.trim() || null, amount: num(f.amount), ...ajusta(f.due_date), business_day: util, notes: f.notes.trim() || null,
       status: pago ? 'pago' : 'aberto', paid_at: pago ? f.paid_at || hoje() : null, payment_method: pago ? f.payment_method : null };
     if (!reg.amount) return aviso('Informe o valor.', true);
     try {
       if (d.id) await ok(sb.from('expenses').update(reg).eq('id', d.id));
       else {
-        const [y, m, dia] = reg.due_date.split('-').map(Number);
-        const regs = [...Array(rep)].map((_, k) => { const ult = new Date(y, m - 1 + k + 1, 0).getDate(); const dt = new Date(y, m - 1 + k, Math.min(dia, ult)).toLocaleDateString('sv-SE'); return k === 0 ? { ...reg, created_by: S.perfil.full_name } : { ...reg, due_date: dt, status: 'aberto', paid_at: null, payment_method: null, created_by: S.perfil.full_name }; });
+        const regs = datasRepetidas(f.due_date, rep).map((iso, k) => k === 0 ? { ...reg, created_by: S.perfil.full_name } : { ...reg, ...ajusta(iso), status: 'aberto', paid_at: null, payment_method: null, created_by: S.perfil.full_name });
         await ok(sb.from('expenses').insert(regs));
       }
       aviso(rep > 1 ? `Despesa lançada para ${rep} meses.` : 'Despesa salva.'); $('#form').innerHTML = ''; depois();
