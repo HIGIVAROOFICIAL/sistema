@@ -53,6 +53,7 @@ const ROTAS = [
   [/^#\/admin$/, () => telaSecao('admin')],
   [/^#\/notas$/, () => telaSecao('notas')],
   [/^#\/notas\/emitidas$/, telaNFeEmitidas],
+  [/^#\/notas\/avulsa$/, telaNFeAvulsa],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
   [/^#\/admin\/(empresa|usuarios|precos|nfe)$/, (m) => telaAdmin(m)],
@@ -169,10 +170,10 @@ const SECOES = {
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1], ['#/admin/nfe', 'nota', 'NF-e (certificado e dados fiscais)', 1]]],
-  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
+  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/avulsa', 'novo', 'Emitir NF-e avulsa', 'emit'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
-const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : i[3] === 'nfe' ? pode('emitir_nfe') || pode('vendas') : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
+const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : i[3] === 'nfe' ? pode('emitir_nfe') || pode('vendas') : i[3] === 'emit' ? pode('emitir_nfe') : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
 async function telaSecao(nome) { if ((nome === 'admin' || (nome === 'notas' && !pode('emitir_nfe'))) && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
 function montarMenu(h) {
   $('#topo').hidden = false;
@@ -429,7 +430,7 @@ async function telaProdutos(modo) {
     } else ps = await buscarProdutos($('#busca').value, 200, true);
     $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}${p.active === false ? ' <span class="selo devolvida">inativo</span>' : ''}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
     // Editar: dois cliques no produto (só administrador ou quem tem "Editar produtos e preços").
-    if (podeEditarProdutos()) $('#lista tr[data-id]').forEach((tr) => { tr.title = 'Dois cliques para editar'; tr.ondblclick = () => { window.getSelection()?.removeAllRanges(); formProduto(ps.find((p) => p.id === tr.dataset.id), carregar); }; });
+    if (podeEditarProdutos()) $$('#lista tr[data-id]').forEach((tr) => { tr.title = 'Dois cliques para editar'; tr.ondblclick = () => { window.getSelection()?.removeAllRanges(); formProduto(ps.find((p) => p.id === tr.dataset.id), carregar); }; });
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
   carregar(); $('#busca').focus();
@@ -1980,7 +1981,7 @@ async function dadosDestinatario(v) {
     });
 }
 // Monta o XML da NF-e 4.00 (sem assinatura) e devolve a chave e os totais.
-function montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb }) {
+function montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb, obsNFe = '' }) {
   const serie = Number(cfg.serie) || 1, dh = dhBahia(), aamm = dh.slice(2, 4) + dh.slice(5, 7), cnpj = '69959700000104';
   let cNF; do { cNF = String(Math.floor(Math.random() * 1e8)).padStart(8, '0'); } while (cNF === String(numero).padStart(8, '0'));
   const base = '29' + aamm + cnpj + '55' + String(serie).padStart(3, '0') + String(numero).padStart(9, '0') + '1' + cNF;
@@ -2014,21 +2015,28 @@ function montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb }) {
     + `<transp><modFrete>9</modFrete></transp>`
     + (prazo ? `<cobr><fat><nFat>${numero}</nFat><vOrig>${nf2(vProd)}</vOrig><vDesc>${nf2(vDesc)}</vDesc><vLiq>${nf2(vNF)}</vLiq></fat><dup><nDup>001</nDup><dVenc>${String(v.due_date).slice(0, 10)}</dVenc><vDup>${nf2(vNF)}</vDup></dup></cobr>` : '')
     + `<pag><detPag><indPag>${prazo ? 1 : 0}</indPag><tPag>${tPag}</tPag>${tPag === '99' ? '<xPag>OUTROS</xPag>' : ''}<vPag>${nf2(vNF)}</vPag>${['03', '04'].includes(tPag) ? '<card><tpIntegra>2</tpIntegra></card>' : ''}</detPag></pag>`
-    + `<infAdic><infCpl>${xmlTxt('DOCUMENTO EMITIDO POR MEI - NAO GERA DIREITO A CREDITO FISCAL DE ICMS E IPI. VENDA N ' + v.number + (v.observations ? '. ' + v.observations : ''), 2000)}</infCpl></infAdic>`
+    + `<infAdic><infCpl>${xmlTxt('DOCUMENTO EMITIDO POR MEI - NAO GERA DIREITO A CREDITO FISCAL DE ICMS E IPI.' + (v.number ? ' VENDA N ' + v.number + '.' : '') + (obsNFe ? ' ' + obsNFe : ''), 2000)}</infCpl></infAdic>`
     + (soDig(cfg.fone).length >= 6 ? `<infRespTec><CNPJ>${cnpj}</CNPJ><xContato>${xmlTxt(cfg.razao || 'HIGIVARO', 60)}</xContato><email>${xmlTxt(emp.email || 'higivaroadm@gmail.com', 60)}</email><fone>${soDig(cfg.fone).slice(0, 14)}</fone></infRespTec>` : '')
     + `</infNFe></NFe>`;
   return { xml, chave, vNF, vProd, vDesc };
 }
 // Fluxo completo: confere tudo, monta, envia pelo programa do PC, registra (o banco manda o e-mail) e oferece o DANFE.
-async function emitirNFe(v, depois) {
+// Textos prontos para as informações complementares (rodapé da NF-e); o administrador edita em Admin › NF-e.
+const TEXTOS_RODAPE_PADRAO = ['Mercadoria entregue conforme o pedido.', 'Pagamento via Pix.', 'Trocas somente com a apresentação desta nota, em até 7 dias.'];
+const textosRodape = (cfg) => (Array.isArray(cfg?.textos) && cfg.textos.length ? cfg.textos : TEXTOS_RODAPE_PADRAO);
+// v = venda (ou documento avulso); itensAvulsos = itens escolhidos na NF-e avulsa (se não vier, usa os itens da venda).
+async function emitirNFe(v, depois, itensAvulsos) {
   try {
     const emp = await ok(sb.from('company_settings').select('*').eq('id', 1).single()), cfg = emp.nfe_config || {};
     if (!cfg.ie || !cfg.logradouro || !cfg.cMun || !cfg.razao) return aviso('Preencha e salve os dados fiscais em Admin › NF-e antes de emitir.', true);
     const amb = cfg.ambiente === '1' ? '1' : '2';
-    const ja = await ok(sb.from('nfe').select('numero').eq('sale_id', v.id).eq('status', 'autorizada').limit(1));
-    if (ja.length) return aviso(`Esta venda já tem a NF-e nº ${ja[0].numero} autorizada.`, true);
+    if (v.id) {
+      const ja = await ok(sb.from('nfe').select('numero').eq('sale_id', v.id).eq('status', 'autorizada').limit(1));
+      if (ja.length) return aviso(`Esta venda já tem a NF-e nº ${ja[0].numero} autorizada.`, true);
+    }
     await assinadorNFe('/status', {});
-    const itens = await ok(sb.from('sale_items').select('*').eq('sale_id', v.id).order('description'));
+    const itens = itensAvulsos || await ok(sb.from('sale_items').select('*').eq('sale_id', v.id).order('description'));
+    if (!itens.length) return aviso('Nenhum item para a nota.', true);
     const ids = [...new Set(itens.map((i) => i.product_id).filter(Boolean))];
     const prods = ids.length ? await ok(sb.from('products').select('id,code,ncm,cest,cfop,cst,origin,ean').in('id', ids)) : [];
     const pm = Object.fromEntries(prods.map((p) => [p.id, p]));
@@ -2040,15 +2048,23 @@ async function emitirNFe(v, depois) {
       <p class="dica">O NCM vem na nota de compra do fornecedor (ou confirme com o contador).</p>`, 'Entendi');
     const dest = await dadosDestinatario(v); if (!dest) return;
     const numero = await proximoNumeroNFe(cfg);
-    const m = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb });
-    const okEmitir = await dialogo(`<h2 style="margin-top:0">Emitir NF-e nº ${numero}${amb === '2' ? ' <span class="selo devolvida">TESTE</span>' : ''}</h2>
-      <p><b>${esc(dest.nome)}</b> · ${esc(formatarDoc(dest.doc))}<br>${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · <b>${brl(m.vNF)}</b>${m.vDesc ? ' (desconto ' + brl(m.vDesc) + ')' : ''}</p>
-      ${amb === '2' ? '<p class="dica">Ambiente de TESTE: a nota não tem valor fiscal.</p>' : '<p class="dica">Ambiente de PRODUÇÃO: a nota tem valor fiscal.</p>'}`, 'Emitir agora');
-    if (!okEmitir) return;
+    const previa = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb });
+    const textos = textosRodape(cfg);
+    const obsNFe = await dialogo(`<h2 style="margin-top:0">Emitir NF-e nº ${numero}${amb === '2' ? ' <span class="selo devolvida">TESTE</span>' : ''}</h2>
+      <p><b>${esc(dest.nome)}</b> · ${esc(formatarDoc(dest.doc))}<br>${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · <b>${brl(previa.vNF)}</b>${previa.vDesc ? ' (desconto ' + brl(previa.vDesc) + ')' : ''}</p>
+      <label>Informações complementares (rodapé da NF-e)</label>
+      <select id="dTxt"><option value="">＋ Inserir um texto pronto…</option>${textos.map((t, k) => `<option value="${k}">${esc(t.length > 90 ? t.slice(0, 90) + '…' : t)}</option>`).join('')}</select>
+      <textarea id="dObsNfe" rows="4" maxlength="1500" placeholder="Ex.: dados do pedido, condições de entrega, observações do cliente…" style="margin-top:6px">${esc(v.observations || '')}</textarea>
+      <small style="color:var(--muted)">O aviso obrigatório do MEI sai sempre na nota${v.number ? ', junto com o nº da venda' : ''}. Os textos prontos são editados em Admin › NF-e.</small>
+      ${amb === '2' ? '<p class="dica">Ambiente de TESTE: a nota não tem valor fiscal.</p>' : '<p class="dica">Ambiente de PRODUÇÃO: a nota tem valor fiscal.</p>'}`, 'Emitir agora',
+      () => $('#dObsNfe').value.trim().replace(/\s+/g, ' '),
+      () => { $('#dTxt').onchange = () => { const k = $('#dTxt').value; if (k === '') return; const ta = $('#dObsNfe'); ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + textos[k]; $('#dTxt').value = ''; ta.focus(); }; });
+    if (obsNFe === null) return;
+    const m = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb, obsNFe });
     aviso('Enviando a NF-e para a SEFAZ-BA…');
     const r = await assinadorNFe('/nfe/enviar', { amb, xml: m.xml });
     const autorizada = ['100', '150'].includes(String(r.cStat));
-    const reg = { sale_id: v.id, ambiente: amb, serie: Number(cfg.serie) || 1, numero, chave: m.chave, status: autorizada ? 'autorizada' : 'rejeitada', cstat: String(r.cStat || r.loteStat || ''), motivo: r.xMotivo || r.loteMotivo || '', protocolo: r.protocolo || null, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, dispositivo: dispositivo(), xml: autorizada ? r.xmlAutorizado : (r.xmlAssinado || m.xml) };
+    const reg = { sale_id: v.id || null, ambiente: amb, serie: Number(cfg.serie) || 1, numero, chave: m.chave, status: autorizada ? 'autorizada' : 'rejeitada', cstat: String(r.cStat || r.loteStat || ''), motivo: r.xMotivo || r.loteMotivo || '', protocolo: r.protocolo || null, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, dispositivo: dispositivo(), xml: autorizada ? r.xmlAutorizado : (r.xmlAssinado || m.xml) };
     try { await ok(sb.rpc('registrar_nfe', { p: reg })); } catch (e) { if (autorizada) await dialogo(`<h2 style="margin-top:0">⚠️ NF-e autorizada, mas não registrada</h2><p>A SEFAZ autorizou a nota nº ${numero}, mas o sistema não conseguiu gravar o registro (${esc(e.message)}). Baixe o XML agora e me avise.</p>`, 'Baixar XML', () => baixarArquivo(`NFe${m.chave}.xml`, r.xmlAutorizado)); }
     if (autorizada) {
       aviso('NF-e autorizada e registrada.');
@@ -2061,6 +2077,71 @@ async function emitirNFe(v, depois) {
   } catch (e) { falhou(e); }
 }
 
+// ---------- NF-e avulsa: puxa uma venda pelo número ou monta os itens à mão ----------
+async function telaNFeAvulsa() {
+  if (!pode('emitir_nfe')) { app.innerHTML = '<p class="vazio">Sem permissão para emitir NF-e.</p>'; return; }
+  let itens = [], venda = null;
+  app.innerHTML = `${secao('notas', '#/notas/avulsa')}
+  <div class="card"><h2 style="margin-top:0">Puxar de uma venda <small style="color:var(--muted);font-weight:400">(opcional)</small></h2>
+    <div class="linha"><div style="flex:0 1 200px"><label>Nº da venda</label><input id="nVenda" inputmode="numeric" placeholder="Ex.: 12"></div><div style="flex:0 0 auto;align-self:flex-end"><button class="btn azul" id="carregar">Carregar venda</button></div></div>
+    <p id="stVenda" style="color:var(--muted);margin:6px 0 0"></p></div>
+  <div class="card"><h2 style="margin-top:0">Cliente</h2>
+    <div class="linha"><div style="flex:0 1 140px"><label>Cód. cliente</label><input id="aCod" inputmode="numeric"></div><div><label>CPF ou CNPJ *</label><input id="aDoc" inputmode="numeric"></div><div style="flex:2 1 260px"><label>Nome / Razão social *</label><input id="aNome"></div></div>
+    <div class="linha"><div><label>Telefone</label><input id="aFone" inputmode="tel"></div><div><label>E-mail</label><input id="aEmail" type="email"></div></div>
+    <small style="color:var(--muted)">O endereço é preenchido na próxima etapa (pelo CNPJ ou pela última nota do cliente).</small></div>
+  <div class="card"><h2 style="margin-top:0">Itens</h2>
+    <div style="position:relative"><input id="aBusca" placeholder="＋ Adicionar produto (palavras-chave)"><div id="aSug"></div></div>
+    <div class="tabela" style="margin-top:10px"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Preço un.</th><th class="num">Desconto R$</th><th class="num">Total</th><th></th></tr></thead><tbody id="aItens"></tbody></table></div>
+    <p class="total" id="aTot"></p></div>
+  <div class="card"><h2 style="margin-top:0">Pagamento</h2>
+    <div class="linha"><div><label>Forma</label><select id="aForma">${FORMAS.map((f) => `<option>${f}</option>`).join('')}</select></div>
+      <div><label>Situação</label><select id="aPago"><option value="recebido">Já recebido (à vista)</option><option value="aberto">A receber (a prazo)</option></select></div>
+      <div id="aVencBox" hidden><label>Vencimento</label><input type="date" id="aVenc" value="${new Date(Date.now() + 30 * 864e5).toLocaleDateString('sv-SE')}"></div></div></div>
+  <div class="acoes"><button class="btn pri grande" id="aEmitir">🧾 Continuar para emitir</button></div>`;
+  const desenhar = () => {
+    $('#aItens').innerHTML = itens.map((i, k) => `<tr><td>${esc(i.description)}<br><small style="color:var(--muted)">${esc(i.code || '')} · ${esc(i.unit || '')}</small></td>
+      <td class="num"><input data-k="${k}" data-c="quantity" inputmode="decimal" value="${String(i.quantity).replace('.', ',')}" style="width:70px"></td>
+      <td class="num"><input data-k="${k}" data-c="unit_price" inputmode="decimal" value="${String(i.unit_price).replace('.', ',')}" style="width:90px"></td>
+      <td class="num"><input data-k="${k}" data-c="discount_value" inputmode="decimal" value="${String(i.discount_value || 0).replace('.', ',')}" style="width:80px"></td>
+      <td class="num">${brl(i.quantity * i.unit_price - (i.discount_value || 0))}</td><td><button class="btn perigo" data-x="${k}" style="padding:3px 8px">✕</button></td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum item. Carregue uma venda ou adicione produtos.</td></tr>';
+    $$('#aItens [data-c]').forEach((inp) => (inp.onchange = () => { itens[inp.dataset.k][inp.dataset.c] = num(inp.value); S.sujo = true; desenhar(); }));
+    $$('#aItens [data-x]').forEach((b) => (b.onclick = () => { itens.splice(b.dataset.x, 1); S.sujo = true; desenhar(); }));
+    const tot = itens.reduce((s, i) => s + i.quantity * i.unit_price - (i.discount_value || 0), 0);
+    $('#aTot').textContent = itens.length ? `${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · Total ${brl(tot)}` : '';
+  };
+  const cliente = (c) => { $('#aCod').value = c.code || c.client_code || ''; $('#aDoc').value = c.doc || c.client_doc || ''; $('#aNome').value = c.name || c.client_name || ''; $('#aFone').value = c.phone || c.client_phone || ''; $('#aEmail').value = c.email || c.client_email || ''; };
+  $('#carregar').onclick = async () => {
+    const n = soDig($('#nVenda').value); if (!n) return aviso('Digite o nº da venda.', true);
+    try {
+      const vs = await ok(sb.from('sales').select('*').in('number', [n, n.padStart(5, '0')]).limit(1)); const v = vs[0];
+      if (!v) { $('#stVenda').textContent = 'Venda nº ' + n + ' não encontrada.'; return; }
+      if (v.status !== 'confirmada') { $('#stVenda').textContent = 'A venda nº ' + v.number + ' está devolvida.'; return; }
+      venda = v; cliente(v); $('#aForma').value = v.payment_method || 'Pix'; $('#aPago').value = v.payment_status === 'aberto' ? 'aberto' : 'recebido'; $('#aVencBox').hidden = $('#aPago').value !== 'aberto'; if (v.due_date) $('#aVenc').value = String(v.due_date).slice(0, 10);
+      itens = (await ok(sb.from('sale_items').select('*').eq('sale_id', v.id).order('description'))).map((i) => ({ product_id: i.product_id, code: i.code, description: i.description, unit: i.unit, quantity: Number(i.quantity), unit_price: Number(i.unit_price), discount_value: Number(i.discount_value || 0) }));
+      $('#stVenda').innerHTML = `✅ Venda nº <b>${esc(v.number)}</b> de ${dataBR(v.date)} carregada: ${itens.length} itens, ${brl(v.total)}. Você pode ajustar os itens antes de emitir.`; S.sujo = true; desenhar();
+    } catch (e) { falhou(e); }
+  };
+  $('#nVenda').onkeydown = (e) => { if (e.key === 'Enter') $('#carregar').click(); };
+  let tc; $('#aCod').oninput = () => { clearTimeout(tc); tc = setTimeout(async () => { const c = soDig($('#aCod').value); if (!c) return; const r = await ok(sb.from('clients').select('*').eq('code', Number(c)).maybeSingle()); if (r) cliente(r); }, 350); };
+  $('#aDoc').oninput = async () => { const d = soDig($('#aDoc').value); if (d.length !== 11 && d.length !== 14) return; const c = await clientePorDoc(d); if (c) cliente(c); else if (d.length === 14) { const r = await buscarCnpj(d); if (r) { $('#aNome').value = r.nome.toUpperCase(); if (r.email && !$('#aEmail').value) $('#aEmail').value = r.email; if (r.fone && !$('#aFone').value) $('#aFone').value = r.fone; } } };
+  $('#aPago').onchange = () => ($('#aVencBox').hidden = $('#aPago').value !== 'aberto');
+  let tb; $('#aBusca').oninput = () => { clearTimeout(tb); tb = setTimeout(async () => {
+    const t = $('#aBusca').value; if (t.trim().length < 2) return ($('#aSug').innerHTML = '');
+    const ps = await buscarProdutos(t, 20);
+    $('#aSug').innerHTML = ps.length ? `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.description)}</b><br><small>${esc(p.code)} · ${esc(p.unit || '')} · ${brl(p.price)}${p.ncm ? '' : ' · <span style="color:var(--red)">sem NCM</span>'}</small></div>`).join('')}</div>` : '<p class="vazio">Nada encontrado.</p>';
+    $$('#aSug [data-id]').forEach((d) => (d.onclick = () => { const p = ps.find((x) => x.id === d.dataset.id); const ja = itens.find((i) => i.product_id === p.id); if (ja) ja.quantity += 1; else itens.push({ product_id: p.id, code: p.code, description: p.description, unit: p.unit, quantity: 1, unit_price: Number(p.price) || 0, discount_value: 0 }); $('#aBusca').value = ''; $('#aSug').innerHTML = ''; S.sujo = true; desenhar(); $('#aBusca').focus(); }));
+  }, 250); };
+  $('#aEmitir').onclick = () => {
+    const doc = soDig($('#aDoc').value), nome = $('#aNome').value.trim();
+    if (![11, 14].includes(doc.length) || nome.length < 2) return aviso('Informe o CPF/CNPJ e o nome do cliente.', true);
+    if (!itens.length) return aviso('Adicione pelo menos um item.', true);
+    if (itens.some((i) => !(i.quantity > 0) || !(i.unit_price > 0))) return aviso('Confira quantidade e preço de todos os itens.', true);
+    const pago = $('#aPago').value === 'recebido';
+    const v = { id: venda?.id || null, number: venda?.number || '', client_name: nome.toUpperCase(), client_doc: doc, client_phone: $('#aFone').value.trim(), client_email: $('#aEmail').value.trim(), payment_method: $('#aForma').value, payment_status: pago ? 'recebido' : 'aberto', due_date: pago ? hoje() : $('#aVenc').value, observations: venda?.observations || '' };
+    emitirNFe(v, () => { S.sujo = false; location.hash = '#/notas/emitidas'; }, itens.map((i) => ({ ...i })));
+  };
+  desenhar();
+}
 // ---------- DANFE (PDF) a partir do XML autorizado ----------
 // Código de barras CODE-128C da chave de acesso.
 const C128 = '212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 114131 311141 411131 211412 211214 211232 2331112'.split(' ');
@@ -2165,6 +2246,8 @@ function formNFeAdmin(e) {
     <form id="ffis"><div class="linha" style="flex-wrap:wrap">${CAMPOS_FISCAIS.map(([k, r, w]) => `<div style="flex:${w} 1 ${w * 110}px"><label>${r}</label><input name="${k}" value="${v(k, k === 'municipio' ? 'BARREIRAS' : k === 'cMun' ? '2903201' : '')}"></div>`).join('')}</div>
     <div class="linha"><div><label>Ambiente</label><select name="ambiente"><option value="2" ${c.ambiente !== '1' ? 'selected' : ''}>TESTE (homologação, sem valor fiscal)</option><option value="1" ${c.ambiente === '1' ? 'selected' : ''}>PRODUÇÃO (nota com valor fiscal)</option></select></div>
       <div style="flex:0 1 110px"><label>Série</label><input name="serie" inputmode="numeric" value="${v('serie', '1')}"></div><div style="flex:0 1 160px"><label>Próximo nº da NF-e</label><input name="proximo" inputmode="numeric" value="${v('proximo', '1')}"></div></div>
+    <label>Textos prontos para o rodapé da NF-e <small>(um por linha; aparecem no menu na hora de emitir)</small></label>
+    <textarea name="textos" rows="5" placeholder="Ex.: Mercadoria entregue conforme o pedido.">${esc(textosRodape(c).join('\n'))}</textarea>
     <p class="dica">Comece em <b>TESTE</b>. Só mude para PRODUÇÃO depois dos testes e da confirmação do contador de que a HIGIVARO está habilitada a emitir NF-e. O próximo nº deve continuar a numeração que a empresa já usa (se já emitiu notas em outro emissor, nesta mesma série).</p>
     <div class="acoes"><button class="btn pri">Salvar dados fiscais</button></div></form></div>`;
 }
@@ -2184,6 +2267,7 @@ function ligarNFeAdmin(e) {
   });
   $('#ffis').onsubmit = async (ev) => {
     ev.preventDefault(); const d = Object.fromEntries(new FormData(ev.target)); Object.keys(d).forEach((k) => (d[k] = String(d[k]).trim()));
+    d.textos = String(d.textos || '').split('\n').map((t) => t.trim()).filter(Boolean).slice(0, 30);
     d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1);
     const falta = [['razao', 'razão social'], ['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
     if (falta.length) return aviso('Preencha: ' + falta.map((x) => x[1]).join(', '), true);
