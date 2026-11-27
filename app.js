@@ -15,7 +15,7 @@ const hoje = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/B
 const soDig = (v) => String(v || '').replace(/\D/g, '');
 const limpaBusca = (t) => String(t || '').replace(/[,()%*\\]/g, ' ').trim();
 function aviso(msg, erro = false) {
-  if (!erro) S.sujo = false; // mensagem de sucesso = o que estava sendo editado foi salvo
+  if (!erro && /salv|registrad|lançad|excluíd|atualizad|importad/i.test(msg)) S.sujo = false; // só mensagem de salvamento libera a saída
   const a = $('#aviso'); a.textContent = msg; a.className = erro ? 'erro' : ''; a.hidden = false;
   clearTimeout(aviso.t); aviso.t = setTimeout(() => (a.hidden = true), erro ? 6000 : 3000);
 }
@@ -1003,8 +1003,8 @@ const dec = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
 function linhaPreco(it) {
   const sug = sugerido(it), ligado = it.acao === 'ligar' && it.produto;
   return `<div class="linha preco-item">
-    <div style="flex:0 1 120px"><label>Lote</label><input data-c="lot" value="${esc(it.lot || '')}"></div>
-    <div style="flex:0 1 150px"><label>Validade</label><input type="date" data-c="expiry" value="${esc(it.expiry || '')}"></div>
+    <div style="flex:0 1 120px"><label>Lote *</label><input data-c="lot" class="${it.lot ? '' : 'falta'}" value="${esc(it.lot || '')}"></div>
+    <div style="flex:0 1 150px"><label>Validade *</label><input type="date" data-c="expiry" class="${it.expiry ? '' : 'falta'}" value="${esc(it.expiry || '')}"></div>
     <div style="flex:0 1 80px"><label>Frete %</label><input data-c="freight_pct" inputmode="decimal" value="${dec(it.freight_pct)}"></div>
     <div style="flex:0 1 90px"><label>Imposto %</label><input data-c="tax_pct" inputmode="decimal" value="${dec(it.tax_pct)}"></div>
     <div style="flex:0 1 80px"><label>Outros %</label><input data-c="other_pct" inputmode="decimal" value="${dec(it.other_pct)}"></div>
@@ -1034,6 +1034,7 @@ async function revisarNota(dados) {
     aplicarPercentuais(it);
   }
   const conferencia = await conferirNota(dados); n.checks = conferencia;
+  S.sujo = true; // nota carregada e ainda não lançada: sair pede confirmação
   const fonte = { xml: 'XML', pdf: 'PDF', foto: 'foto', manual: 'chave digitada' }[n.source] || n.source;
   const icone_ = { ok: '✅', erro: '❌', aviso: '⚠️', info: 'ℹ️' };
   $('#rev').innerHTML = `<div class="card conferencia"><h2 style="margin-top:0">Conferência da nota</h2>${conferencia.map((c) => `<div class="conf-${c.st}">${icone_[c.st]} ${esc(c.txt)}</div>`).join('')}</div>
@@ -1110,6 +1111,7 @@ async function revisarNota(dados) {
     itens.forEach((it, k) => { if (it.acao === 'ignorar') return; const nome = `item ${k + 1}`;
       if (!(it.quantity > 0)) faltas.push(nome + ': quantidade'); if (!(it.unit_cost > 0)) faltas.push(nome + ': custo');
       if (!(it.sale_price > 0)) faltas.push(nome + ': preço de venda'); if (it.margin_pct === '' || it.margin_pct == null) faltas.push(nome + ': margem');
+      if (!String(it.lot || '').trim()) faltas.push(nome + ': lote'); if (!it.expiry) faltas.push(nome + ': validade');
       if (it.acao === 'novo') { if (!String(it.novoDesc ?? it.description).trim()) faltas.push(nome + ': descrição'); if (!String(it.novoMarca || '').trim()) faltas.push(nome + ': marca'); if (!String(it.novoUnid || '').trim()) faltas.push(nome + ': unidade'); } });
     if (!$('#nForn').value.trim()) faltas.push('nota: fornecedor'); if (!$('#nNum').value.trim()) faltas.push('nota: número'); if (!$('#nData').value) faltas.push('nota: data de emissão'); if (!num($('#nTotal').value)) faltas.push('nota: valor total');
     if (faltas.length) { desenharItens(); return aviso('Preencha antes de dar entrada: ' + faltas.slice(0, 6).join('; ') + (faltas.length > 6 ? ` (e mais ${faltas.length - 6})` : ''), true); }
