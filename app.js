@@ -271,7 +271,7 @@ async function telaInicio() {
 // Janelas de aviso sobre a tela (cada uma com ✕): vencimentos de hoje a receber / a pagar e produtos perto da validade.
 async function mostrarAvisos() {
   let d; try { d = await ok(sb.rpc('painel_inicio')); } catch (e) { console.error(e); return; }
-  if (!location.hash.match(/^#\/?$/)) return; // a pessoa já saiu da tela inicial
+  if (!/^#\/?$/.test(location.hash || '#/')) return; // a pessoa já saiu da tela inicial
   const soma = (l) => l.reduce((s, x) => s + Number(x.valor || 0), 0);
   const lista = (itens, linha, max = 5) => `<ul>${itens.slice(0, max).map(linha).join('')}</ul>${itens.length > max ? `<small class="mais">+ ${itens.length - max} ${itens.length - max === 1 ? 'outro' : 'outros'}</small>` : ''}`;
   const rodape = (at, p7, fem) => `<div class="rodape-janela"><span class="${at?.n ? 'ruim' : ''}">⚠️ ${fem ? 'Atrasadas' : 'Atrasados'}: <b>${at?.n || 0}</b>${at?.n ? ' · ' + brl(at.valor) : ''}</span><span>📅 Próximos 7 dias: <b>${p7?.n || 0}</b>${p7?.n ? ' · ' + brl(p7.valor) : ''}</span></div>`;
