@@ -55,6 +55,7 @@ const ROTAS = [
   [/^#\/notas\/emitidas$/, telaNFeEmitidas],
   [/^#\/notas\/avulsa$/, telaNFeAvulsa],
   [/^#\/notas\/servico$/, telaNFSe],
+  [/^#\/notas\/servico\/emitir$/, telaEmitirNFSe],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
   [/^#\/admin\/(empresa|usuarios|precos|nfe)$/, (m) => telaAdmin(m)],
@@ -171,7 +172,7 @@ const SECOES = {
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1], ['#/admin/nfe', 'nota', 'NF-e (certificado e dados fiscais)', 1]]],
-  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF emitidas (produtos)', 'nfe'], ['#/notas/servico', 'nota', 'NF emitidas (serviços)', 'nfe'], ['#/notas/avulsa', 'novo', 'Emitir NF-e avulsa', 'emit'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
+  notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF emitidas (produtos)', 'nfe'], ['#/notas/servico', 'nota', 'NF emitidas (serviços)', 'nfe'], ['#/notas/avulsa', 'novo', 'Emitir NF-e avulsa', 'emit'], ['#/notas/servico/emitir', 'novo', 'Emitir NFS-e (serviço)', 'emit'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
 const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; if (atual) { const op = itens.find((i) => i[0] === atual); return barraVoltar(`${titulo}${op ? ' <span class="subtitulo">› ' + op[2] + '</span>' : ''}`, '#/' + nome); } return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || (i[3] === 'ep' ? podeEditarProdutos() : i[3] === 'nfe' ? pode('emitir_nfe') || pode('vendas') : i[3] === 'emit' ? pode('emitir_nfe') : ehAdmin())).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
@@ -1964,7 +1965,6 @@ const errosNfse = (r) => (r.erros || (r.erro ? [r.erro] : [])).map((e) => `${e.C
 async function telaNFSe() {
   if (!pode('emitir_nfe') && !pode('vendas')) { app.innerHTML = '<p class="vazio">Sem acesso às notas fiscais.</p>'; return; }
   app.innerHTML = `${secao('notas', '#/notas/servico')}
-  ${pode('emitir_nfe') ? '<div class="acoes" style="margin-top:0"><button class="btn pri" id="novaNfse">＋ Emitir NFS-e (serviço)</button></div>' : ''}
   <div class="linha"><div style="flex:0 1 200px"><label>Mês</label><input id="mes" type="month" value="" title="Vazio = todos os meses"></div>
     <div style="flex:0 1 200px"><label>Situação</label><select id="sit"><option value="">Todas</option><option>autorizada</option><option>cancelada</option><option>rejeitada</option><option>rascunho</option></select></div>
     <div><label>Buscar</label><input id="busca" placeholder="Tomador, CPF/CNPJ ou nº"></div></div>
@@ -1981,11 +1981,17 @@ async function telaNFSe() {
     $('#lista').innerHTML = ns.map((n, k) => `<tr class="clica" data-k="${k}"><td>${new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17)}</td><td>${n.numero ? 'nº ' + esc(n.numero) : '<small style="color:var(--muted)">DPS ' + esc(n.ndps ?? '') + '</small>'}</td><td>${esc(n.cliente || '')}</td><td class="num">${brl(n.valor)}</td><td>${seloNFe(n)}</td><td class="esconde-cel">${esc(n.emitida_por || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma NFS-e ainda.</td></tr>';
     $$('#lista tr[data-k]').forEach((tr) => (tr.onclick = () => detalheNFSe(ns[tr.dataset.k], carregar)));
   };
-  if ($('#novaNfse')) $('#novaNfse').onclick = () => emitirNFSe(null, carregar);
   let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; $('#sit').onchange = carregar;
   carregar().catch(falhou);
 }
 
+// Tela "Emitir NFS-e (serviço)": abre a janela de emissão; ao terminar, vai para a lista de NFS-e.
+async function telaEmitirNFSe() {
+  if (!pode('emitir_nfe')) { app.innerHTML = '<p class="vazio">Sem permissão para emitir notas fiscais.</p>'; return; }
+  app.innerHTML = `${secao('notas', '#/notas/servico/emitir')}<p class="dica">Preencha a nota de serviço na janela. Se ela foi fechada, clique abaixo para abrir de novo.</p><div class="acoes"><button class="btn pri" id="abrirNfse">＋ Abrir o formulário da NFS-e</button></div>`;
+  const abrir = () => emitirNFSe(null, () => { location.hash = '#/notas/servico'; });
+  $('#abrirNfse').onclick = abrir; abrir();
+}
 // Janela de emissão: tomador + serviço. "Prever" salva o rascunho e gera o espelho; "Concluir" envia ao Sistema Nacional.
 async function emitirNFSe(rascunho, depois) {
   try {
