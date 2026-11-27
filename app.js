@@ -222,7 +222,7 @@ function telaLogin(modo = 'entrar') {
         // Número de usuário (definido pelo administrador) vira o e-mail de login.
         let login = String(f.email).trim();
         if (/^[0-9]{1,5}$/.test(login)) { const em = await ok(sb.rpc('email_do_login', { p_num: Number(login) })); if (!em) throw new Error('usuário nº ' + login + ' não encontrado'); login = em; }
-        await ok(sb.auth.signInWithPassword({ email: login, password: f.senha })); rotear();
+        await ok(sb.auth.signInWithPassword({ email: login, password: f.senha })); S.avisosPendentes = true; rotear();
       }
       if (modo === 'cadastro') {
         const r = await ok(sb.auth.signUp({ email: f.email, password: f.senha, options: { data: { full_name: f.nome }, emailRedirectTo: location.origin + location.pathname } }));
@@ -263,10 +263,8 @@ sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') telaTrocarSe
 // Cada janela só aparece para quem tem acesso àquela área.
 async function telaInicio() {
   app.innerHTML = `<div class="inicio-logo"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>`;
-  // Avisos do dia: abrem uma vez por dia em cada navegador, logo depois de entrar.
-  const chave = `avisos-${S.perfil?.id}-${hoje()}`;
-  let visto = false; try { visto = sessionStorage.getItem(chave) === '1'; sessionStorage.setItem(chave, '1'); } catch { /* sem armazenamento: mostra sempre */ }
-  if (!visto) mostrarAvisos();
+  // Avisos do dia: abrem toda vez que o usuário entra no sistema (login ou abrir o sistema); não repetem ao só voltar ao Início.
+  if (S.avisosPendentes !== false) { S.avisosPendentes = false; mostrarAvisos(); }
 }
 // Janelas de aviso sobre a tela (cada uma com ✕): vencimentos de hoje a receber / a pagar e produtos perto da validade.
 async function mostrarAvisos() {
