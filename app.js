@@ -55,7 +55,7 @@ const ROTAS = [
   [/^#\/notas\/emitidas$/, telaNFeEmitidas],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
-  [/^#\/admin\/(empresa|usuarios|precos)$/, (m) => telaAdmin(m)],
+  [/^#\/admin\/(empresa|usuarios|precos|nfe)$/, (m) => telaAdmin(m)],
 ];
 async function rotear() {
   const h = location.hash || '#/';
@@ -168,7 +168,7 @@ const SECOES = {
   clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
-  admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1]]],
+  admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1], ['#/admin/nfe', 'nota', 'NF-e (certificado e dados fiscais)', 1]]],
   notas: ['Notas fiscais', [['#/notas/emitidas', 'nota', 'NF-e emitidas (vendas)', 'nfe'], ['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
@@ -1725,6 +1725,7 @@ async function telaAdmin(modo) {
   <p class="dica">A formação de preço (margem, frete, comissão, regime de impostos) agora fica em <a href="#/admin/precos">Admin › Formação de preços</a>.</p>
   <div class="acoes"><button class="btn pri">Salvar empresa</button></div></form></div>
   ${modo === 'precos' ? formPrecosAdmin(e) : ''}
+  ${modo === 'nfe' ? formNFeAdmin(e) : ''}
   <div ${modo === 'usuarios' ? '' : 'hidden'}><div class="acoes" style="margin-top:0"><button class="btn pri" id="novoUsuario">＋ Novo usuário</button></div><div id="formUsuario"></div></div>
   <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Use <b>＋ Novo usuário</b> para cadastrar com e-mail e senha temporária: no primeiro acesso a pessoa é obrigada a criar a senha pessoal. Em <b>Pode acessar</b>, marque as áreas de cada vendedor (administrador acessa tudo; Notas fiscais, Despesas e Admin são só do administrador).</p>
   <div class="tabela"><table><thead><tr><th>Nº login</th><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th><th></th></tr></thead><tbody>
@@ -1789,6 +1790,7 @@ async function telaAdmin(modo) {
     try { await ok(sb.from('profiles').update({ permissions: perms }).eq('id', tr.dataset.id)); aviso('Permissões salvas.'); } catch (err) { falhou(err); }
   }));
   if (modo === 'precos') ligarPrecosAdmin(e);
+  if (modo === 'nfe') ligarNFeAdmin(e);
   $('#fe').onsubmit = async (ev) => {
     ev.preventDefault(); const f = Object.fromEntries(new FormData(ev.target)); f.monthly_goal = num(f.monthly_goal);
     try { await ok(sb.from('company_settings').update(f).eq('id', 1)); S.empresa = { ...S.empresa, ...f }; aviso('Empresa salva.'); } catch (err) { falhou(err); }
@@ -1879,6 +1881,53 @@ async function enviarBoasVindas(userId) {
 // Preço de venda sugerido: custo × (1 + frete% + imposto% + outros%) × (1 + margem%).
 const precoSugerido = (custo, f, t, o, m) => Math.round((Number(custo) || 0) * (1 + ((Number(f) || 0) + (Number(t) || 0) + (Number(o) || 0)) / 100) * (1 + (Number(m) || 0) / 100) * 100) / 100;
 const padroesPreco = () => { const c = configPreco(); return { margin_pct: c.margem, freight_pct: c.frete, tax_pct: 0, other_pct: c.outros_c }; };
+// ---------- Admin › NF-e: certificado no cofre, teste da SEFAZ e dados fiscais ----------
+// Chama a função "nfe" do servidor (o certificado fica no cofre do Supabase; o navegador nunca vê o certificado).
+async function chamarNFe(dados) {
+  const { data, error } = await sb.functions.invoke('nfe', { body: dados });
+  if (error) { let m = error.message; try { const j = await error.context.json(); m = j.erro || m; } catch { /* mantém */ } throw new Error(m); }
+  if (!data?.ok) throw new Error(data?.erro || 'falha na função de NF-e');
+  return data;
+}
+const CAMPOS_FISCAIS = [['ie', 'Inscrição Estadual *', 1], ['logradouro', 'Logradouro *', 3], ['numero', 'Número *', 1], ['complemento', 'Complemento', 2], ['bairro', 'Bairro *', 2], ['cMun', 'Cód. município IBGE *', 1], ['municipio', 'Município *', 2], ['cep', 'CEP *', 1], ['fone', 'Telefone', 1]];
+function formNFeAdmin(e) {
+  const c = e.nfe_config || {}, v = (k, pad = '') => esc(c[k] ?? pad);
+  return `<div class="card"><h2 style="margin-top:0">1. Certificado digital no cofre</h2>
+    <p style="color:var(--muted);margin-top:0">O certificado A1 da HIGIVARO fica guardado no cofre do servidor (Supabase), protegido pelo 2FA. Nem o navegador nem os usuários têm acesso a ele; o sistema só pede ao servidor para assinar a nota.</p>
+    <div class="acoes"><button class="btn azul" id="vCert">Verificar certificado</button></div><p id="rCert" class="dica" hidden></p></div>
+  <div class="card"><h2 style="margin-top:0">2. Conexão com a SEFAZ-BA</h2>
+    <div class="acoes"><button class="btn" id="tHom">Testar ambiente de TESTE</button><button class="btn" id="tProd">Testar PRODUÇÃO</button></div><p id="rSefaz" class="dica" hidden></p></div>
+  <div class="card"><h2 style="margin-top:0">3. Dados fiscais da HIGIVARO (saem na NF-e)</h2>
+    <div class="acoes" style="margin-top:0"><button class="btn azul" id="bCad">🔎 Buscar meus dados na SEFAZ-BA</button></div><p id="rCad" class="dica" hidden></p>
+    <form id="ffis"><div class="linha" style="flex-wrap:wrap">${CAMPOS_FISCAIS.map(([k, r, w]) => `<div style="flex:${w} 1 ${w * 110}px"><label>${r}</label><input name="${k}" value="${v(k, k === 'municipio' ? 'BARREIRAS' : k === 'cMun' ? '2903201' : '')}"></div>`).join('')}</div>
+    <div class="linha"><div><label>Ambiente</label><select name="ambiente"><option value="2" ${c.ambiente !== '1' ? 'selected' : ''}>TESTE (homologação, sem valor fiscal)</option><option value="1" ${c.ambiente === '1' ? 'selected' : ''}>PRODUÇÃO (nota com valor fiscal)</option></select></div>
+      <div style="flex:0 1 110px"><label>Série</label><input name="serie" inputmode="numeric" value="${v('serie', '1')}"></div><div style="flex:0 1 160px"><label>Próximo nº da NF-e</label><input name="proximo" inputmode="numeric" value="${v('proximo', '1')}"></div></div>
+    <p class="dica">Comece em <b>TESTE</b>. Só mude para PRODUÇÃO depois dos testes e da confirmação do contador de que a HIGIVARO está habilitada a emitir NF-e. O próximo nº deve continuar a numeração que a empresa já usa (se já emitiu notas em outro emissor, nesta mesma série).</p>
+    <div class="acoes"><button class="btn pri">Salvar dados fiscais</button></div></form></div>`;
+}
+function ligarNFeAdmin(e) {
+  const mostra = (id, html, erro) => { const p = $(id); p.hidden = false; p.innerHTML = html; p.style.background = erro ? '#fdecea' : ''; p.style.color = erro ? 'var(--red)' : ''; };
+  const ocupado = async (b, fn) => { b.disabled = true; const t = b.textContent; b.textContent = 'Aguarde…'; try { await fn(); } finally { b.disabled = false; b.textContent = t; } };
+  $('#vCert').onclick = (ev) => ocupado(ev.target, async () => { try { const r = await chamarNFe({ acao: 'certificado' }); mostra('#rCert', `✅ Certificado encontrado no cofre: <b>${esc(r.titular)}</b> · válido até <b>${dataBR(r.validade)}</b>`); } catch (er) { mostra('#rCert', '❌ ' + esc(er.message), true); } });
+  const testar = (amb, b) => ocupado(b, async () => { try { const r = await chamarNFe({ acao: 'status', amb }); mostra('#rSefaz', `${r.cStat === '107' ? '✅' : '⚠️'} ${amb === '1' ? 'PRODUÇÃO' : 'TESTE'}: ${esc(r.cStat)} – ${esc(r.xMotivo)}`, r.cStat !== '107'); } catch (er) { mostra('#rSefaz', '❌ ' + esc(er.message), true); } });
+  $('#tHom').onclick = (ev) => testar('2', ev.target); $('#tProd').onclick = (ev) => testar('1', ev.target);
+  $('#bCad').onclick = (ev) => ocupado(ev.target, async () => {
+    try {
+      const r = await chamarNFe({ acao: 'cadastro', cnpj: '69959700000104' });
+      const c = (r.cadastros || [])[0]; if (!c) return mostra('#rCad', `⚠️ ${esc(r.cStat)} – ${esc(r.xMotivo)}`, true);
+      const f = $('#ffis'); ['ie', 'logradouro', 'numero', 'complemento', 'bairro', 'cMun', 'municipio', 'cep'].forEach((k) => { const val = k === 'ie' ? c.IE : c[k]; if (val) f[k].value = val; }); S.sujo = true;
+      mostra('#rCad', `✅ ${esc(c.nome)} · IE <b>${esc(c.IE)}</b> · situação ${c.situacao === '1' ? 'habilitada' : esc(c.situacao)}${c.regime ? ' · ' + esc(c.regime) : ''}. Confira os campos abaixo e clique em Salvar.`, c.situacao !== '1');
+    } catch (er) { mostra('#rCad', '❌ ' + esc(er.message), true); }
+  });
+  $('#ffis').onsubmit = async (ev) => {
+    ev.preventDefault(); const d = Object.fromEntries(new FormData(ev.target)); Object.keys(d).forEach((k) => (d[k] = String(d[k]).trim()));
+    d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1);
+    const falta = [['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
+    if (falta.length) return aviso('Preencha: ' + falta.map((x) => x[1]).join(', '), true);
+    if (d.ambiente === '1' && !confirm('Mudar para PRODUÇÃO? As notas emitidas passam a ter valor fiscal.')) return;
+    try { await ok(sb.from('company_settings').update({ nfe_config: d }).eq('id', 1)); S.empresa = { ...S.empresa, nfe_config: d }; aviso('Dados fiscais salvos.'); } catch (er) { falhou(er); }
+  };
+}
 // ---------- Admin › Formação de preços ----------
 // Regime tributário (os impostos de venda são calculados sozinhos) e os padrões que todos os produtos seguem.
 const CAMPOS_PADRAO = [['custo_op', 'Custo operacional %'], ['comissao', 'Comissão %'], ['outros_v', 'Outros (venda) %'], ['enc_fin', 'Encargos financeiros %'], ['margem', 'Margem de lucro padrão %']];
