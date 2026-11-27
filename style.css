@@ -117,3 +117,9 @@ tr.clica:hover td{background:#f7fafd}
 .permissoes label{display:flex;gap:5px;align-items:center;margin:0;color:var(--ink);font-size:13px;white-space:nowrap}
 .permissoes input{width:auto}
 .preco-item label{font-size:12px}
+/* Curva ABC e validade */
+.selo.classe-A{background:#e5f6d8;color:var(--green-d)}
+.selo.classe-B{background:#e3effc;color:var(--azul)}
+.selo.classe-C{background:#fdf0d5;color:#9a6700}
+.selo.classe-S{background:#f1f1f1;color:#777}
+.selo.aviso-venc{background:#fdf0d5;color:#9a6700}

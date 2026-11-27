@@ -30,6 +30,8 @@ const ROTAS = [
   [/^#\/?$/, telaInicio],
   [/^#\/produtos$/, () => telaSecao('produtos')],
   [/^#\/produtos\/(lista|estoque|novo|importar)$/, (m) => telaProdutos(m)],
+  [/^#\/produtos\/abc$/, telaCurvaABC],
+  [/^#\/produtos\/validade$/, telaValidade],
   [/^#\/orcamento\/novo(?:\?cliente=(\d+))?$/, (cod) => telaEditorOrcamento(null, cod)],
   [/^#\/clientes$/, () => telaSecao('clientes')],
   [/^#\/clientes\/(novo|lista)$/, (modo) => telaClientes(modo)],
@@ -143,6 +145,7 @@ const ICONES = {
   usuarios: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   despesas: '<path d="M4 3h16v18l-3-2-3 2-2-2-2 2-3-2-3 2z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   nota: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h2v4H8zM12 13h1M15 13h1M12 17h4"/>',
+  calendario: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M12 14v3l2 1"/>',
   foto: '<path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
@@ -154,7 +157,7 @@ const SECOES = {
   orcamentos: ['Orçamentos', [['#/orcamento/novo', 'novo', 'Novo orçamento'], ['#/orcamentos/abertos', 'orcamentos', 'Orçamentos em aberto'], ['#/orcamentos/todos', 'lista', 'Todos os orçamentos']]],
   vendas: ['Vendas', [['#/vendas/lista', 'vendas', 'Vendas do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/vendas/devolvidas', 'devolucao', 'Devoluções']]],
   clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
-  produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
+  produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1]]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
   notas: ['Notas fiscais', [['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
@@ -252,6 +255,96 @@ async function buscarProdutos(t, limite = 30) {
   let q = sb.from('products').select('*').order('price', { ascending: true }).order('description').limit(limite);
   for (const p of semAcento(limpaBusca(t)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
   return ok(q);
+}
+// ---------- Curva ABC ----------
+// Faturamento por produto nas vendas confirmadas do período; A = até 80% do faturamento acumulado, B = até 95%, C = o resto.
+async function telaCurvaABC() {
+  app.innerHTML = `${secao('produtos', '#/produtos/abc')}
+  <div class="linha"><div style="flex:0 1 220px"><label>Período</label><select id="per"><option value="30">Últimos 30 dias</option><option value="90" selected>Últimos 90 dias</option><option value="180">Últimos 6 meses</option><option value="365">Últimos 12 meses</option></select></div>
+    <div style="flex:0 1 220px"><label>Mostrar</label><select id="cls"><option value="">Todas as classes</option><option>A</option><option>B</option><option>C</option><option value="S">Sem venda (com estoque)</option></select></div>
+    <div><label>Buscar</label><input id="busca" placeholder="Palavras-chave do produto"></div></div>
+  <div class="acoes"><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
+  <div id="kpis" class="grade" style="margin-top:12px"></div>
+  <p style="color:var(--muted);font-size:13px;margin:8px 0 0"><b>A</b> = produtos que somam até 80% do faturamento (os mais importantes) · <b>B</b> = até 95% · <b>C</b> = os 5% finais · <b>Sem venda</b> = têm estoque mas não venderam no período.</p>
+  <div class="tabela" style="margin-top:10px"><table><thead><tr><th>Classe</th><th>Código</th><th>Produto</th><th class="num">Qtd vendida</th><th class="num">Faturamento</th><th class="num esconde-cel">% do total</th><th class="num esconde-cel">% acumulado</th><th class="num">Estoque</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let linhas = [], resumo = {};
+  const carregar = async () => {
+    const ini = new Date(Date.now() - Number($('#per').value) * 864e5).toLocaleDateString('sv-SE');
+    const [its, prods] = await Promise.all([
+      ok(sb.from('sale_items').select('product_id,code,description,brand,quantity,total,sales!inner(date,status)').eq('sales.status', 'confirmada').gte('sales.date', ini).limit(20000)),
+      ok(sb.from('products').select('id,code,description,brand,stock,price').limit(5000)),
+    ]);
+    const porProd = new Map();
+    its.forEach((i) => { const k = i.product_id || 'cod:' + i.code; const x = porProd.get(k) || { id: i.product_id, code: i.code, description: i.description, brand: i.brand, qtd: 0, fat: 0 }; x.qtd += Number(i.quantity); x.fat += Number(i.total); porProd.set(k, x); });
+    const total = [...porProd.values()].reduce((s, x) => s + x.fat, 0);
+    let acum = 0;
+    const vendidos = [...porProd.values()].sort((a, b) => b.fat - a.fat).map((x) => { const pct = total ? (x.fat / total) * 100 : 0; const antes = acum; acum += pct; const est = prods.find((p) => p.id === x.id); return { ...x, pct, acum, classe: antes < 80 ? 'A' : antes < 95 ? 'B' : 'C', stock: est ? est.stock : null }; });
+    const semVenda = prods.filter((p) => Number(p.stock) > 0 && !porProd.has(p.id)).map((p) => ({ id: p.id, code: p.code, description: p.description, brand: p.brand, qtd: 0, fat: 0, pct: 0, acum: null, classe: 'S', stock: p.stock }));
+    linhas = [...vendidos, ...semVenda];
+    resumo = { total, A: vendidos.filter((x) => x.classe === 'A'), B: vendidos.filter((x) => x.classe === 'B'), C: vendidos.filter((x) => x.classe === 'C'), S: semVenda };
+    const soma = (l) => l.reduce((s, x) => s + x.fat, 0);
+    $('#kpis').innerHTML = ['A', 'B', 'C'].map((c) => `<div class="kpi"><small>Classe ${c} · ${resumo[c].length} produto(s)</small><strong>${brl(soma(resumo[c]))}</strong></div>`).join('') + `<div class="kpi"><small>Sem venda (com estoque)</small><strong>${resumo.S.length}</strong></div>`;
+    desenhar();
+  };
+  const desenhar = () => {
+    let l = linhas; const c = $('#cls').value; if (c) l = l.filter((x) => x.classe === c);
+    const ps = semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean); if (ps.length) l = l.filter((x) => ps.every((p) => semAcento(`${x.code} ${x.description} ${x.brand || ''}`).includes(p)));
+    $('#lista').innerHTML = l.slice(0, 600).map((x) => `<tr><td><span class="selo classe-${x.classe}">${x.classe === 'S' ? 'sem venda' : x.classe}</span></td><td>${esc(x.code)}</td><td>${esc(x.description)}<br><small style="color:var(--muted)">${esc(x.brand || '')}</small></td><td class="num">${String(x.qtd).replace('.', ',')}</td><td class="num"><b>${brl(x.fat)}</b></td><td class="num esconde-cel">${x.pct.toFixed(1).replace('.', ',')}%</td><td class="num esconde-cel">${x.acum == null ? '—' : x.acum.toFixed(1).replace('.', ',') + '%'}</td><td class="num">${x.stock ?? '—'}</td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhuma venda no período.</td></tr>';
+  };
+  $('#per').onchange = carregar; $('#cls').onchange = desenhar; let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(desenhar, 200); };
+  $('#relatorio').onclick = () => pdfTabela('CURVA ABC', $('#per').selectedOptions[0].text + ($('#cls').value ? ' • ' + $('#cls').selectedOptions[0].text : ''),
+    [['Faturamento', brl(resumo.total)], ['Classe A', `${resumo.A.length} prod.`], ['Classe B', `${resumo.B.length} prod.`], ['Classe C', `${resumo.C.length} prod.`]],
+    ['Classe', 'Código', 'Produto', 'Qtd', 'Faturamento', '%', '% acum.', 'Estoque'],
+    linhas.filter((x) => !$('#cls').value || x.classe === $('#cls').value).map((x) => [x.classe === 'S' ? 'Sem venda' : x.classe, x.code, x.description, String(x.qtd).replace('.', ','), brl(x.fat), x.pct.toFixed(1).replace('.', ',') + '%', x.acum == null ? '—' : x.acum.toFixed(1).replace('.', ',') + '%', String(x.stock ?? '—')]),
+    { 0: { cellWidth: 16, fontStyle: 'bold' }, 1: { cellWidth: 14 }, 3: { cellWidth: 14, halign: 'right' }, 4: { cellWidth: 26, halign: 'right', fontStyle: 'bold' }, 5: { cellWidth: 14, halign: 'right' }, 6: { cellWidth: 16, halign: 'right' }, 7: { cellWidth: 16, halign: 'right' } }, 'Curva-ABC').catch(falhou);
+  carregar();
+}
+// ---------- Próximos do vencimento ----------
+// Lotes que entraram pelas notas fiscais, com validade, de produtos que ainda têm estoque.
+async function telaValidade() {
+  if (!ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; }
+  app.innerHTML = `${secao('produtos', '#/produtos/validade')}
+  <div class="linha"><div style="flex:0 1 240px"><label>Mostrar</label><select id="prazo"><option value="0">Já vencidos</option><option value="30">Vencem em até 30 dias</option><option value="60" selected>Vencem em até 60 dias</option><option value="90">Vencem em até 90 dias</option><option value="180">Vencem em até 6 meses</option><option value="9999">Todos com validade</option></select></div>
+    <div><label>Buscar</label><input id="busca" placeholder="Palavras-chave do produto ou lote"></div></div>
+  <div class="acoes"><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
+  <div id="kpis" class="grade" style="margin-top:12px"></div>
+  <p style="color:var(--muted);font-size:13px;margin:8px 0 0">A validade vem do lote informado na <b>entrada da nota fiscal</b>. Só aparecem produtos com estoque. O sistema ainda não sabe de qual lote saiu cada venda; use a lista para priorizar a venda dos lotes mais antigos.</p>
+  <div class="tabela" style="margin-top:10px"><table><thead><tr><th>Validade</th><th>Situação</th><th>Produto</th><th>Lote</th><th class="num esconde-cel">Entrou</th><th class="num">Estoque atual</th><th class="esconde-cel">NF / fornecedor</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let linhas = [];
+  const carregar = async () => {
+    const dias = Number($('#prazo').value), lim = new Date(Date.now() + dias * 864e5).toLocaleDateString('sv-SE');
+    let q = sb.from('purchase_items').select('lot,expiry,stock_added,quantity,products!inner(id,code,description,brand,stock),purchase_invoices(number,supplier_name)').not('expiry', 'is', null).gt('products.stock', 0).order('expiry').limit(3000);
+    q = dias === 0 ? q.lt('expiry', hoje()) : q.lte('expiry', lim);
+    linhas = await ok(q);
+    const venc = linhas.filter((l) => diasAtraso(l.expiry) > 0), em30 = linhas.filter((l) => diasAtraso(l.expiry) <= 0 && diasAtraso(l.expiry) > -30);
+    $('#kpis').innerHTML = `<div class="kpi"><small>Lotes na lista</small><strong>${linhas.length}</strong></div><div class="kpi"><small>Já vencidos</small><strong style="color:var(--red)">${venc.length}</strong></div><div class="kpi"><small>Vencem em até 30 dias</small><strong style="color:#b07800">${em30.length}</strong></div>`;
+    desenhar();
+  };
+  const situacao = (l) => { const d = diasAtraso(l.expiry); return d > 0 ? `Vencido há ${d} ${d === 1 ? 'dia' : 'dias'}` : d === 0 ? 'Vence hoje' : `Vence em ${-d} ${d === -1 ? 'dia' : 'dias'}`; };
+  const desenhar = () => {
+    let l = linhas; const ps = semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean);
+    if (ps.length) l = l.filter((x) => ps.every((p) => semAcento(`${x.products.code} ${x.products.description} ${x.lot || ''}`).includes(p)));
+    $('#lista').innerHTML = l.map((x) => { const d = diasAtraso(x.expiry); return `<tr><td><b>${dataBR(x.expiry)}</b></td><td><span class="selo ${d > 0 ? 'vencido' : d > -30 ? 'aviso-venc' : 'aberto'}">${situacao(x)}</span></td><td>${esc(x.products.code)} · ${esc(x.products.description)}<br><small style="color:var(--muted)">${esc(x.products.brand || '')}</small></td><td>${esc(x.lot || '—')}</td><td class="num esconde-cel">${x.stock_added}</td><td class="num"><b>${x.products.stock}</b></td><td class="esconde-cel"><small>${x.purchase_invoices ? 'NF ' + esc(x.purchase_invoices.number || '') + ' · ' + esc(x.purchase_invoices.supplier_name || '') : ''}</small></td></tr>`; }).join('') || '<tr><td colspan="7" class="vazio">Nenhum lote neste prazo. 🎉</td></tr>';
+  };
+  $('#prazo').onchange = carregar; let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(desenhar, 200); };
+  $('#relatorio').onclick = () => pdfTabela('PRÓXIMOS DO VENCIMENTO', $('#prazo').selectedOptions[0].text, [['Lotes', String(linhas.length)], ['Já vencidos', String(linhas.filter((l) => diasAtraso(l.expiry) > 0).length)]],
+    ['Validade', 'Situação', 'Código', 'Produto', 'Lote', 'Estoque'], linhas.map((x) => [dataBR(x.expiry), situacao(x), x.products.code, x.products.description, x.lot || '—', String(x.products.stock)]),
+    { 0: { cellWidth: 20, fontStyle: 'bold' }, 1: { cellWidth: 30 }, 2: { cellWidth: 14 }, 4: { cellWidth: 24 }, 5: { cellWidth: 18, halign: 'right' } }, 'Vencimentos').catch(falhou);
+  carregar();
+}
+// Relatório genérico em PDF (mesmo padrão visual): título, quadros de resumo, tabela e rodapé.
+async function pdfTabela(titulo, subtitulo, quadros, cab, corpo, colunas, arquivo) {
+  const c = S.empresa || {}; const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' }); const logo = await carregarLogo();
+  const M = 12, L = 186, NAVY = [3, 35, 68], TINTA = [13, 42, 74], CINZA = [96, 114, 138], LINHA = [223, 231, 240], FUNDO = [244, 247, 251];
+  const agora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Bahia' }).slice(0, 17).replace(',', ' às');
+  cabecalhoPdf(pdf, c, logo, titulo, subtitulo, 'Gerado em ' + agora);
+  let y = 48; const w = (L - 3 * (quadros.length - 1)) / quadros.length;
+  quadros.forEach(([r, v], k) => { const x = M + k * (w + 3); pdf.setFillColor(...FUNDO); pdf.setDrawColor(...LINHA); pdf.roundedRect(x, y, w, 17, 2, 2, 'FD'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...CINZA); pdf.text(r.toUpperCase(), x + 4, y + 6); pdf.setFontSize(12); pdf.setTextColor(...TINTA); pdf.text(v, x + 4, y + 13); });
+  pdf.autoTable({ startY: y + 22, margin: { left: M, right: M, top: 20, bottom: 22 }, head: [cab], body: corpo, theme: 'plain',
+    styles: { font: 'helvetica', fontSize: 7.8, cellPadding: { top: 1.8, bottom: 1.8, left: 1.6, right: 1.6 }, textColor: TINTA, lineColor: LINHA, lineWidth: { bottom: 0.2 }, valign: 'middle' },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.3, lineWidth: 0 }, alternateRowStyles: { fillColor: [248, 250, 253] }, columnStyles: colunas,
+    didDrawPage: (d) => { if (d.pageNumber > 1) { pdf.setFillColor(...NAVY); pdf.rect(0, 0, 210, 14, 'F'); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255); pdf.text(`HIGIVARO  •  ${titulo}  •  ${agora}`, M, 9); } } });
+  rodapePdf(pdf, c); pdf.save(`${arquivo}-${hoje()}.pdf`);
 }
 async function telaProdutos(modo) {
   if ((modo === 'novo' || modo === 'importar') && !ehAdmin()) { location.hash = '#/produtos'; return; }
