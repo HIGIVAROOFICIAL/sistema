@@ -227,13 +227,18 @@ function telaLogin(modo = 'entrar') {
 }
 
 function telaTrocarSenha(obrigatoria) {
-  $('#topo').hidden = !obrigatoria;
-  app.innerHTML = `<div class="auth card"><h1>Criar nova senha</h1><form id="f"><label>Nova senha</label><input name="s1" type="password" minlength="6" required autocomplete="new-password"><label>Repita a senha</label><input name="s2" type="password" minlength="6" required autocomplete="new-password"><div class="acoes"><button class="btn pri grande">Salvar senha</button></div></form></div>`;
+  // No primeiro acesso (senha temporária dada pelo administrador) só o logo e o "Sair" ficam visíveis até criar a senha pessoal.
+  $('#topo').hidden = !obrigatoria; if (obrigatoria) $('#menu').innerHTML = `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
+  if ($('#sair')) $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
+  app.innerHTML = `<div class="auth card"><h1>${obrigatoria ? 'Bem-vindo(a)! Crie a sua senha pessoal' : 'Criar nova senha'}</h1>
+    ${obrigatoria ? '<p style="color:var(--muted)">Você entrou com uma <b>senha temporária</b>. Para continuar, crie a sua senha pessoal (mínimo 6 caracteres, diferente da temporária). Só você vai saber essa senha.</p>' : ''}
+    <form id="f"><label>Nova senha</label><input name="s1" type="password" minlength="6" required autocomplete="new-password"><label>Repita a senha</label><input name="s2" type="password" minlength="6" required autocomplete="new-password"><div class="acoes"><button class="btn pri grande">Salvar minha senha</button></div></form></div>`;
   $('#f').onsubmit = async (e) => {
     e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
     if (f.s1 !== f.s2) return aviso('As senhas não são iguais.', true);
     try {
-      await ok(sb.auth.updateUser({ password: f.s1 }));
+      const { error } = await sb.auth.updateUser({ password: f.s1 });
+      if (error) throw new Error(/different|same/i.test(error.message) ? 'a nova senha precisa ser diferente da senha temporária' : error.message);
       await ok(sb.rpc('atualizar_meu_perfil', { p_nome: null, p_senha_trocada: true }));
       S.perfil = null; aviso('Senha salva.'); location.hash = '#/'; rotear();
     } catch (err) { falhou(err); }
@@ -1316,14 +1321,48 @@ async function telaAdmin(modo) {
   <h2>Formação de preço (padrão para todos os produtos)</h2><p style="color:var(--muted);margin-top:0">Usado na entrada de nota e no cadastro de produto. Preço de venda = custo × (1 + frete% + imposto% + outros%) × (1 + margem%). Cada produto pode ter os seus próprios valores.</p>
   <div class="linha">${campo('default_margin_pct', 'Margem de lucro (%)', 'inputmode="decimal"')}${campo('default_freight_pct', 'Frete (%)', 'inputmode="decimal"')}${campo('default_tax_pct', 'Impostos (%)', 'inputmode="decimal"')}${campo('default_other_pct', 'Outros custos (%)', 'inputmode="decimal"')}</div>
   <div class="acoes"><button class="btn pri">Salvar empresa</button></div></form></div>
-  <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Novos usuários se cadastram em "Criar acesso" na tela de login e aparecem aqui para você liberar. Em <b>Pode acessar</b>, marque as áreas de cada vendedor (administrador acessa tudo; Notas fiscais, Despesas e Admin são só do administrador).</p>
-  <div class="tabela"><table><thead><tr><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th></tr></thead><tbody>
+  <div ${modo === 'usuarios' ? '' : 'hidden'}><div class="acoes" style="margin-top:0"><button class="btn pri" id="novoUsuario">＋ Novo usuário</button></div><div id="formUsuario"></div></div>
+  <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Use <b>＋ Novo usuário</b> para cadastrar com e-mail e senha temporária: no primeiro acesso a pessoa é obrigada a criar a senha pessoal. Em <b>Pode acessar</b>, marque as áreas de cada vendedor (administrador acessa tudo; Notas fiscais, Despesas e Admin são só do administrador).</p>
+  <div class="tabela"><table><thead><tr><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th><th></th></tr></thead><tbody>
   ${us.map((u) => `<tr data-id="${u.id}"><td>${esc(u.full_name)}</td><td class="esconde-cel">${esc(u.email)}</td>
     <td><select data-c="access_status" ${u.id === S.perfil.id ? 'disabled' : ''}><option ${u.access_status === 'liberado' ? 'selected' : ''}>liberado</option><option ${u.access_status === 'aguardando' ? 'selected' : ''}>aguardando</option></select></td>
     <td><select data-c="role" ${u.id === S.perfil.id ? 'disabled' : ''}><option value="user" ${u.role === 'user' ? 'selected' : ''}>vendedor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select></td>
     <td><input type="checkbox" data-c="active" ${u.active ? 'checked' : ''} ${u.id === S.perfil.id ? 'disabled' : ''} style="width:auto"></td>
-    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${!Array.isArray(u.permissions) || u.permissions.includes(a) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td></tr>`).join('')}
+    <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${!Array.isArray(u.permissions) || u.permissions.includes(a) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
+    <td>${u.id === S.perfil.id ? '' : `<button class="btn" data-senha="${u.id}" style="padding:5px 10px;font-size:13px">Nova senha temporária</button>`}${u.must_change_password ? '<br><small style="color:#9a6700">aguardando criar a senha pessoal</small>' : ''}</td></tr>`).join('')}
   </tbody></table></div></div>`;
+  // Senha temporária: 8 caracteres fáceis de ditar (sem 0/O, 1/l), para o admin repassar ao usuário.
+  const gerarSenha = () => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; const r = crypto.getRandomValues(new Uint32Array(8)); return [...r].map((n) => c[n % c.length]).join(''); };
+  $('#novoUsuario').onclick = () => {
+    $('#formUsuario').innerHTML = `<div class="card"><h2 style="margin-top:0">Novo usuário</h2><form id="fu">
+      <div class="linha"><div style="flex:2 1 240px"><label>Nome *</label><input name="nome" required></div><div style="flex:2 1 240px"><label>E-mail (será o login) *</label><input name="email" type="email" required autocomplete="off"></div></div>
+      <div class="linha"><div><label>Senha temporária * (mínimo 6)</label><div class="linha" style="gap:6px"><input name="senha" id="senhaTemp" required minlength="6" autocomplete="new-password"><button type="button" class="btn" id="gerar" style="flex:0 0 auto">Gerar</button></div></div>
+        <div style="flex:0 1 200px"><label>Tipo</label><select name="tipo" id="tipoU"><option value="user">Vendedor</option><option value="admin">Administrador</option></select></div></div>
+      <div id="boxPerms"><label>Pode acessar</label><div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" name="perm" value="${a}" checked> ${rot}</label>`).join('')}</div></div>
+      <p class="dica">Passe o e-mail e a senha temporária para a pessoa. No primeiro acesso, o sistema pede para ela criar a própria senha; a temporária deixa de valer.</p>
+      <div class="acoes"><button class="btn pri">Criar usuário</button><button type="button" class="btn" id="cancelaU">Cancelar</button></div></form></div>`;
+    $('#gerar').onclick = () => { $('#senhaTemp').value = gerarSenha(); S.sujo = true; };
+    $('#tipoU').onchange = () => ($('#boxPerms').hidden = $('#tipoU').value === 'admin');
+    $('#cancelaU').onclick = () => { $('#formUsuario').innerHTML = ''; S.sujo = false; };
+    $('#fu').onsubmit = async (ev) => {
+      ev.preventDefault(); const f = new FormData(ev.target);
+      const perms = f.getAll('perm'); const tipo = f.get('tipo');
+      if (tipo !== 'admin' && !perms.length) return aviso('Marque pelo menos uma área que o usuário pode acessar.', true);
+      try {
+        await ok(sb.rpc('admin_criar_usuario', { p_nome: f.get('nome'), p_email: f.get('email'), p_senha: f.get('senha'), p_role: tipo, p_perms: perms }));
+        const email = f.get('email'), senha = f.get('senha');
+        aviso('Usuário criado.'); await telaAdmin(modo);
+        await dialogo(`<h2 style="margin-top:0">Usuário criado ✅</h2><p>Passe estes dados para a pessoa:</p><p style="font-size:17px">Endereço: <b>${esc(location.origin + location.pathname)}</b><br>E-mail: <b>${esc(email)}</b><br>Senha temporária: <b>${esc(senha)}</b></p><p class="dica">No primeiro acesso ela vai criar a senha pessoal.</p>`, 'Entendi');
+      } catch (err) { falhou(err); }
+    };
+    $('#fu').nome.focus();
+  };
+  $$('[data-senha]').forEach((b) => (b.onclick = async () => {
+    const nova = gerarSenha(); const nome = b.closest('tr').children[0].textContent;
+    const r = await dialogo(`<h2 style="margin-top:0">Nova senha temporária</h2><p>Para <b>${esc(nome)}</b>. A senha atual deixa de valer e, no próximo acesso, ele(a) cria uma senha pessoal.</p><label>Senha temporária</label><input id="dSenha" value="${nova}">`, 'Definir senha', () => $('#dSenha').value);
+    if (!r) return;
+    try { await ok(sb.rpc('admin_senha_temporaria', { p_user: b.dataset.senha, p_senha: r })); aviso('Senha temporária definida.'); await telaAdmin(modo); await dialogo(`<h2 style="margin-top:0">Senha definida ✅</h2><p>Passe para <b>${esc(nome)}</b> a senha temporária: <b style="font-size:18px">${esc(r)}</b></p>`, 'Entendi'); } catch (err) { falhou(err); }
+  }));
   $$('[data-perm]').forEach((el) => (el.onchange = async () => {
     const tr = el.closest('tr'); const perms = $$('[data-perm]', tr).filter((x) => x.checked).map((x) => x.dataset.perm);
     try { await ok(sb.from('profiles').update({ permissions: perms }).eq('id', tr.dataset.id)); aviso('Permissões salvas.'); } catch (err) { falhou(err); }
