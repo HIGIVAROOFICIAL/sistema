@@ -682,7 +682,12 @@ async function clientePorDoc(dig) {
 // Dados públicos do CNPJ: BrasilAPI (nome e situação) + CNPJ.ws (e-mail e telefone, que a BrasilAPI quase nunca traz).
 async function buscarCnpj(c) {
   try {
-    const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c); if (!r.ok) return null;
+    const r = await fetch('https://brasilapi.com.br/api/cnpj/v1/' + c).catch(() => null);
+    if (!r || !r.ok) { // reserva: cnpj.ws (quando a BrasilAPI falha ou ainda não tem o CNPJ)
+      const w = await fetch('https://publica.cnpj.ws/cnpj/' + c).catch(() => null); if (!w || !w.ok) return null;
+      const d = await w.json(), e = d.estabelecimento || {};
+      return { nome: d.razao_social || e.nome_fantasia || '', email: e.email ? String(e.email).toLowerCase() : '', fone: e.telefone1 ? String((e.ddd1 || '') + e.telefone1).replace(/\D/g, '').replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3') : '', situacao: String(e.situacao_cadastral || 'encontrado').toLowerCase(), endereco: [e.tipo_logradouro && e.logradouro ? e.tipo_logradouro + ' ' + e.logradouro : e.logradouro, e.numero, e.bairro, e.cidade?.nome && e.cidade.nome + '-' + (e.estado?.sigla || '')].filter(Boolean).join(', ') };
+    }
     const d = await r.json();
     let email = d.email, fone = d.ddd_telefone_1;
     if (!email || !fone) {
@@ -1587,8 +1592,11 @@ async function revisarNota(dados) {
   $('#rev').innerHTML = `<div class="card conferencia"><h2 style="margin-top:0">Conferência da nota</h2>${conferencia.map((c) => `<div class="conf-${c.st}">${icone_[c.st]} ${esc(c.txt)}</div>`).join('')}</div>
   <div class="card"><h2 style="margin-top:0">Conferir nota antes de dar entrada <small style="color:var(--muted);font-weight:400">(lida do ${fonte})</small></h2>
     <div class="linha"><div style="flex:2 1 260px"><label>Fornecedor</label><input id="nForn" value="${esc(n.supplier_name)}"></div><div><label>CNPJ</label><input id="nCnpj" value="${esc(n.supplier_cnpj)}"></div></div>
-    <div class="linha"><div><label>Nº da NF</label><input id="nNum" value="${esc(n.number)}"></div><div><label>Série</label><input id="nSerie" value="${esc(n.series)}"></div><div><label>Emissão</label><input type="date" id="nData" value="${esc(n.issue_date)}"></div><div><label>Valor total (R$)</label><input id="nTotal" inputmode="decimal" value="${String(n.total || '').replace('.', ',')}"></div></div>
+    <div class="linha"><div><label>Nº da NF</label><input id="nNum" value="${esc(n.number)}"></div><div><label>Série</label><input id="nSerie" value="${esc(n.series)}"></div><div><label>Emissão${!n.issue_date && n.access_key ? ` <small style="color:var(--muted)">(pela chave: ${n.access_key.slice(4, 6)}/20${n.access_key.slice(2, 4)})</small>` : ''}</label><input type="date" id="nData" value="${esc(n.issue_date)}" ${!n.issue_date && n.access_key ? `min="20${n.access_key.slice(2, 4)}-${n.access_key.slice(4, 6)}-01" max="20${n.access_key.slice(2, 4)}-${n.access_key.slice(4, 6)}-31"` : ''}></div><div><label>Valor total (R$)</label><input id="nTotal" inputmode="decimal" value="${String(n.total || '').replace('.', ',')}"></div></div>
     ${n.access_key ? `<p style="color:var(--muted);margin:8px 0 0">Chave: ${esc(n.access_key)} · <a href="https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g=" target="_blank" id="abrirSefaz">consultar na SEFAZ</a> (a chave é copiada; cole lá e resolva o "não sou robô")</p>` : ''}
+    ${n.access_key && !itens.length ? `<div class="dica" style="margin-top:12px"><b>📥 Puxar todos os dados da nota (emissão, valor, itens e parcelas)</b><br>A chave sozinha não traz os itens nem o valor. Baixe o XML desta nota pela chave (grátis) e importe aqui que o sistema preenche tudo:
+      <div class="acoes" style="margin-top:8px"><a class="btn azul" href="https://www.fsist.com.br/" target="_blank" rel="noopener" id="abrirFsist">1. Baixar o XML no Fsist</a><label class="btn pri" style="margin:0">2. Importar o XML baixado<input type="file" id="xmlDaChave" accept=".xml,text/xml,application/xml" hidden></label></div>
+      <small>No Fsist: cole a chave (o sistema já copia), clique em consultar, resolva o "não sou robô" e baixe o XML. Outra opção: pedir o XML ao fornecedor por e-mail ou WhatsApp.</small></div>` : ''}
   </div>
   <div class="card"><h2 style="margin-top:0">Itens</h2><p style="color:var(--muted);margin-top:0">Para cada item: ligue a um produto seu ou cadastre como novo. <b>Fator</b> = quantas unidades do seu estoque vêm em 1 unidade da nota (ex.: caixa com 12 → 12).</p>
     <div id="itens"></div>
@@ -1598,6 +1606,11 @@ async function revisarNota(dados) {
   <div class="acoes"><button class="btn pri grande" id="confirmar">Dar entrada no estoque</button></div>`;
   $('#rev').scrollIntoView({ behavior: 'smooth' });
   if ($('#abrirSefaz')) $('#abrirSefaz').onclick = () => { navigator.clipboard?.writeText(n.access_key).catch(() => {}); };
+  if ($('#abrirFsist')) $('#abrirFsist').onclick = () => { navigator.clipboard?.writeText(n.access_key).then(() => aviso('Chave copiada: cole no Fsist.'), () => {}); };
+  if ($('#xmlDaChave')) $('#xmlDaChave').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { const d = lerXmlNfe(await lerTextoXml(f)); if (d.nota.access_key && d.nota.access_key !== n.access_key && !confirm('Este XML é de outra nota (chave diferente). Usar mesmo assim?')) return; revisarNota(d); } catch (err) { falhou(err); }
+  };
   const desenharItens = () => {
     $('#itens').innerHTML = itens.length ? itens.map((it, k) => `<div class="item-nota" data-k="${k}">
       <div><b>${esc(it.description)}</b><br><small style="color:var(--muted)">${it.supplier_code ? 'cód. fornecedor ' + esc(it.supplier_code) : ''}${it.ean ? ' · EAN ' + esc(it.ean) : ''}</small></div>
