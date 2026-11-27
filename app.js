@@ -1077,8 +1077,8 @@ async function revisarNota(dados) {
       desenharItens();
     }));
     $$('#itens [data-x]').forEach((b) => (b.onclick = () => { itens.splice(b.dataset.x, 1); desenharItens(); }));
-    $('#itens [data-sug]').forEach((b) => (b.onclick = () => { const it = itens[b.closest('[data-k]').dataset.k]; it.produto = it.sugestoes[b.dataset.sug]; it.acao = 'ligar'; aplicarPercentuais(it, true); desenharItens(); }));
-    $('#itens [data-usar]').forEach((b) => (b.onclick = () => { const it = itens[b.closest('[data-k]').dataset.k]; it.sale_price = sugerido(it); it.precoManual = false; if (it.acao === 'ligar') it.update_price = true; S.sujo = true; desenharItens(); }));
+    $$('#itens [data-sug]').forEach((b) => (b.onclick = () => { const it = itens[b.closest('[data-k]').dataset.k]; it.produto = it.sugestoes[b.dataset.sug]; it.acao = 'ligar'; aplicarPercentuais(it, true); desenharItens(); }));
+    $$('#itens [data-usar]').forEach((b) => (b.onclick = () => { const it = itens[b.closest('[data-k]').dataset.k]; it.sale_price = sugerido(it); it.precoManual = false; if (it.acao === 'ligar') it.update_price = true; S.sujo = true; desenharItens(); }));
     $$('#itens .buscaProd').forEach((inp) => {
       let t; inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
         const it = itens[inp.closest('[data-k]').dataset.k]; it.busca = inp.value; const box = inp.nextElementSibling;
