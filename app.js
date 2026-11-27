@@ -40,18 +40,21 @@ const ROTAS = [
   [/^#\/orcamentos$/, () => telaSecao('orcamentos')],
   [/^#\/orcamentos\/(abertos|todos)$/, (m) => telaOrcamentos(m)],
   [/^#\/vendas$/, () => telaSecao('vendas')],
-  [/^#\/vendas\/(lista|devolvidas)$/, (m) => telaVendas(m)],
+  [/^#\/vendas\/lista$/, () => telaVendas('lista')],
+  [/^#\/vendas\/devolvidas$/, () => telaDevolucoes('vendas')],
   [/^#\/venda\/([\w-]+)$/, telaVenda],
   [/^#\/financeiro$/, () => telaSecao('financeiro')],
   [/^#\/financeiro\/resumo$/, telaFinanceiro],
   [/^#\/financeiro\/receber$/, telaAReceber],
+  [/^#\/financeiro\/quitadas$/, telaQuitadas],
+  [/^#\/financeiro\/devolucoes$/, () => telaDevolucoes('financeiro')],
   [/^#\/financeiro\/despesas$/, () => telaDespesas('lista')],
   [/^#\/financeiro\/despesas\/nova$/, () => telaDespesas('nova')],
   [/^#\/admin$/, () => telaSecao('admin')],
   [/^#\/notas$/, () => telaSecao('notas')],
   [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
   [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
-  [/^#\/admin\/(empresa|usuarios)$/, (m) => telaAdmin(m)],
+  [/^#\/admin\/(empresa|usuarios|precos)$/, (m) => telaAdmin(m)],
 ];
 async function rotear() {
   const h = location.hash || '#/';
@@ -77,7 +80,7 @@ const pode = (area) => ehAdmin() || (area === 'editar_produtos' ? Array.isArray(
 const podeEditarProdutos = () => pode('editar_produtos');
 function areaDoEndereco(h) {
   if (/^#\/orcamento/.test(h)) return 'orcamentos';
-  if (h === '#/financeiro/receber') return pode('vendas') ? 'vendas' : 'financeiro';
+  if (/^#\/financeiro\/(receber|quitadas|devolucoes)$/.test(h)) return pode('vendas') ? 'vendas' : 'financeiro';
   if (/^#\/venda/.test(h)) return 'vendas';
   if (/^#\/cliente/.test(h)) return 'clientes';
   if (/^#\/produto/.test(h)) return 'produtos';
@@ -87,7 +90,7 @@ function areaDoEndereco(h) {
 
 // ---------- voltar e "deseja salvar?" ----------
 // Qualquer digitação num formulário marca a tela como "com alterações"; ao sair sem salvar, o sistema pergunta.
-const CAMPOS_DE_BUSCA = /^(busca|bp|bcli|addItem|mes|sit|st)$/;
+const CAMPOS_DE_BUSCA = /^(busca|bp|bcli|addItem|mes|sit|st|tipo|prazo)$/;
 ['input', 'change'].forEach((ev) => document.addEventListener(ev, (e) => {
   const el = e.target; if (!el.closest || !el.closest('#app') || el.closest('.fundo-dialogo')) return;
   if (CAMPOS_DE_BUSCA.test(el.id) || el.classList.contains('buscaProd') || el.type === 'file') return;
@@ -151,6 +154,8 @@ const ICONES = {
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
+  quitada: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16 9.8"/>',
+  preco: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
 };
 const icone = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICONES[n]}</svg>`;
 // Cada área do menu abre com botões grandes de opções sobre o tema (pedido do dono).
@@ -159,8 +164,8 @@ const SECOES = {
   vendas: ['Vendas', [['#/vendas/lista', 'vendas', 'Vendas do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/vendas/devolvidas', 'devolucao', 'Devoluções']]],
   clientes: ['Clientes', [['#/clientes/novo', 'novoCliente', 'Cadastrar novo cliente'], ['#/clientes/lista', 'clientes', 'Clientes cadastrados']]],
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/abc', 'grafico', 'Curva ABC'], ['#/produtos/validade', 'calendario', 'Próximos do vencimento', 1], ['#/produtos/novo', 'novo', 'Cadastrar produto', 'ep'], ['#/produtos/importar', 'importar', 'Importar planilha', 'ep']]],
-  financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1]]],
-  admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
+  financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1], ['#/financeiro/quitadas', 'quitada', 'Quitadas'], ['#/financeiro/devolucoes', 'devolucao', 'Devoluções']]],
+  admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1], ['#/admin/precos', 'preco', 'Formação de preços', 1]]],
   notas: ['Notas fiscais', [['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 // Com uma opção escolhida, mostra só o título + "← Voltar" (os outros botões somem); sem opção, mostra os botões.
@@ -254,9 +259,38 @@ function telaTrocarSenha(obrigatoria) {
 sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') telaTrocarSenha(false); });
 
 // ---------- início ----------
-// Tela inicial: só a logo da HIGIVARO (versão branca, o fundo branco se mistura ao da tela, sem recorte).
+// Tela inicial: logo da HIGIVARO + janelas com os avisos do dia (vencimentos de hoje, atrasados, validade dos lotes).
+// Cada janela só aparece para quem tem acesso àquela área.
 async function telaInicio() {
-  app.innerHTML = `<div class="inicio-logo"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>`;
+  const agora = new Date(), hora = Number(agora.toLocaleString('pt-BR', { timeZone: 'America/Bahia', hour: '2-digit', hour12: false }));
+  const saud = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+  const dia = agora.toLocaleDateString('pt-BR', { timeZone: 'America/Bahia', weekday: 'long', day: 'numeric', month: 'long' });
+  const nome = String(S.perfil?.full_name || '').trim().split(/\s+/)[0] || '';
+  app.innerHTML = `<div class="inicio-logo pequena"><img src="logo-inicio.jpg" alt="HIGIVARO - Distribuidora de produtos de limpeza"></div>
+  <p class="saudacao">${saud}${nome ? ', <b>' + esc(nome[0].toUpperCase() + nome.slice(1).toLowerCase()) + '</b>' : ''}! Hoje é ${esc(dia)}.</p>
+  <div id="painel" class="painel"><p class="carregando">Carregando os avisos do dia…</p></div>`;
+  let d; try { d = await ok(sb.rpc('painel_inicio')); } catch (e) { console.error(e); $('#painel').innerHTML = ''; return; }
+  const soma = (l) => l.reduce((s, x) => s + Number(x.valor || 0), 0);
+  const lista = (itens, linha, vazio, max = 5) => itens.length ? `<ul>${itens.slice(0, max).map(linha).join('')}</ul>${itens.length > max ? `<small class="mais">+ ${itens.length - max} ${itens.length - max === 1 ? 'outro' : 'outros'}</small>` : ''}` : `<p class="tudo-ok">${vazio}</p>`;
+  const rodape = (at, p7, fem) => `<div class="rodape-janela"><span class="${at?.n ? 'ruim' : ''}">⚠️ ${fem ? 'Atrasadas' : 'Atrasados'}: <b>${at?.n || 0}</b>${at?.n ? ' · ' + brl(at.valor) : ''}</span><span>📅 Próximos 7 dias: <b>${p7?.n || 0}</b>${p7?.n ? ' · ' + brl(p7.valor) : ''}</span></div>`;
+  const jan = [];
+  if (d.receber_hoje) jan.push(`<a class="janela receber" href="#/financeiro/receber"><h3>💰 Vencem hoje · a receber</h3>
+    <div class="valor">${brl(soma(d.receber_hoje))}<small>${d.receber_hoje.length} ${d.receber_hoje.length === 1 ? 'venda' : 'vendas'}</small></div>
+    ${lista(d.receber_hoje, (x) => `<li><span>Nº ${esc(x.numero)} · ${esc(x.cliente)}</span><b>${brl(x.valor)}</b></li>`, 'Nenhum recebimento vence hoje.')}${rodape(d.receber_atrasado, d.receber_7d)}</a>`);
+  if (d.pagar_hoje) jan.push(`<a class="janela pagar" href="#/financeiro/despesas"><h3>🧾 Vencem hoje · a pagar</h3>
+    <div class="valor">${brl(soma(d.pagar_hoje))}<small>${d.pagar_hoje.length} ${d.pagar_hoje.length === 1 ? 'conta' : 'contas'}</small></div>
+    ${lista(d.pagar_hoje, (x) => `<li><span>${esc(x.descricao)}${x.fornecedor ? ' · ' + esc(x.fornecedor) : ''}</span><b>${brl(x.valor)}</b></li>`, 'Nenhuma conta vence hoje. 🎉')}${rodape(d.pagar_atrasado, d.pagar_7d, true)}</a>`);
+  if (d.validade) {
+    const vn = d.validade_n || {};
+    jan.push(`<a class="janela validade" ${ehAdmin() ? 'href="#/produtos/validade"' : ''}><h3>⏳ Produtos próximos do vencimento</h3>
+    <div class="chips-validade"><span class="v1">${vn.vencidos || 0} vencidos</span><span class="v2">${vn.em30 || 0} em até 30 dias</span><span class="v3">${vn.em60 || 0} em 31 a 60 dias</span></div>
+    ${lista(d.validade, (x) => `<li><span>${dataBR(x.validade)} · ${esc(x.produto)}${x.lote ? ' <small>lote ' + esc(x.lote) + '</small>' : ''}</span><b class="${x.dias < 0 ? 'ruim' : x.dias <= 30 ? 'atencao' : ''}">${x.dias < 0 ? 'venceu' : x.dias === 0 ? 'hoje' : 'em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias')}</b></li>`, 'Nenhum lote com estoque vence nos próximos 60 dias. 🎉', 6)}</a>`);
+  }
+  if (d.vendas_hoje || d.estoque_baixo != null) jan.push(`<div class="janela hoje"><h3>📈 Resumo de hoje</h3>
+    ${d.vendas_hoje ? `<a class="linha-resumo" href="#/vendas/lista"><span>Vendas confirmadas hoje</span><b>${d.vendas_hoje.n} · ${brl(d.vendas_hoje.valor)}</b></a>` : ''}
+    ${d.estoque_baixo != null ? `<a class="linha-resumo" href="#/produtos/estoque"><span>Produtos com estoque baixo (até 5)</span><b>${d.estoque_baixo}</b></a>` : ''}
+    ${pode('orcamentos') ? '<a class="linha-resumo" href="#/orcamento/novo"><span>＋ Novo orçamento</span><b>→</b></a>' : ''}</div>`);
+  $('#painel').innerHTML = jan.join('');
 }
 
 // ---------- produtos ----------
@@ -399,10 +433,51 @@ const CAMPOS_PRECO = {
 };
 const P_CREDITOS = ['cred_icms', 'cred_pis', 'cred_cofins', 'cred_ipi'], P_ACRESC = ['ipi', 'st', 'fcp', 'frete', 'outros_c'];
 const P_VENDA = ['custo_op', 'trib_fed', 'pis', 'cofins', 'ir', 'csll', 'icms', 'comissao', 'outros_v', 'enc_fin'];
+// Coluna "Custo": valores do próprio produto (ou o padrão do Admin, se for novo).
+// Coluna "Preço de venda": impostos automáticos (regime + NCM + CSOSN) e custos de venda do Admin › Formação de preços; só a margem é do produto.
 function pricingPadrao(p) {
-  const pad = padroesPreco(), base = Object.fromEntries(Object.keys(CAMPOS_PRECO).map((k) => [k, 0]));
-  return Object.assign(base, { frete: p?.freight_pct ?? pad.freight_pct, outros_c: p?.other_pct ?? pad.other_pct, trib_fed: p?.tax_pct ?? pad.tax_pct, margem: p?.margin_pct ?? pad.margin_pct }, p?.pricing || {});
+  const c = configPreco(), base = Object.fromEntries(Object.keys(CAMPOS_PRECO).map((k) => [k, 0]));
+  const f = Object.assign(base, { frete: p?.freight_pct ?? c.frete, outros_c: p?.other_pct ?? c.outros_c, margem: p?.margin_pct ?? c.margem }, p?.pricing || {});
+  if (!p?.pricing && Number(p?.tax_pct)) f.ipi = Number(p.tax_pct); // "imposto da compra" dos cadastros antigos
+  Object.assign(f, { custo_op: c.custo_op, comissao: c.comissao, outros_v: c.outros_v, enc_fin: c.enc_fin }, impostosVenda(p || {}).valores);
+  return f;
 }
+// Padrões da formação de preço definidos pelo administrador.
+function configPreco(e = S.empresa || {}) {
+  const d = e.pricing_defaults || {}, n = (v, pad) => (v === undefined || v === null || v === '' ? Number(pad) || 0 : Number(v));
+  return { regime: e.tax_regime || 'MEI', simples: n(d.simples, 4), icms: n(d.icms, 20.5), frete: n(d.frete, e.default_freight_pct ?? 0), outros_c: n(d.outros_c, e.default_other_pct ?? 0),
+    custo_op: n(d.custo_op, 0), comissao: n(d.comissao, 0), outros_v: n(d.outros_v, 0), enc_fin: n(d.enc_fin, 0), margem: n(d.margem, e.default_margin_pct ?? 30) };
+}
+const REGIMES = [['MEI', 'MEI (imposto fixo no DAS mensal)'], ['SIMPLES', 'Simples Nacional'], ['PRESUMIDO', 'Lucro Presumido'], ['REAL', 'Lucro Real']];
+// Revenda monofásica de PIS/Cofins (perfumaria, higiene pessoal, sabonete de toucador, escova de dentes).
+const NCM_MONOFASICO = /^(3303|3304|3305|3306|3307|34011190|34012010|96032100)/;
+const CSOSN_ST = ['201', '202', '203', '500', '60'];
+// Impostos sobre a venda calculados pelo sistema, conforme o regime da empresa e o NCM/CSOSN do produto.
+function impostosVenda(prod, c = configPreco()) {
+  const st = CSOSN_ST.includes(String(prod?.cst ?? '')), mono = NCM_MONOFASICO.test(soDig(prod?.ncm));
+  const v = { trib_fed: 0, pis: 0, cofins: 0, ir: 0, csll: 0, icms: 0 }, notas = [];
+  if (c.regime === 'SIMPLES') {
+    // Anexo I (comércio), faixa 1: ICMS = 34% do DAS; PIS + Cofins = 15,5% do DAS.
+    let fr = 1; if (st) { fr -= 0.34; notas.push('ICMS já pago por substituição: sai a parte do ICMS do DAS'); } if (mono) { fr -= 0.155; notas.push('produto monofásico: sai a parte de PIS/Cofins'); }
+    v.trib_fed = Math.round(c.simples * fr * 100) / 100; notas.unshift(`Simples ${String(c.simples).replace('.', ',')}% no campo Trib. federais`);
+  } else if (c.regime === 'PRESUMIDO' || c.regime === 'REAL') {
+    const pres = c.regime === 'PRESUMIDO';
+    Object.assign(v, { pis: mono ? 0 : pres ? 0.65 : 1.65, cofins: mono ? 0 : pres ? 3 : 7.6, ir: pres ? 1.2 : 0, csll: pres ? 1.08 : 0, icms: st ? 0 : c.icms });
+    if (mono) notas.push('produto monofásico: PIS/Cofins zerados na revenda'); if (st) notas.push('ICMS já pago por substituição');
+    if (!pres) notas.push('no Lucro Real o IR e a CSLL são sobre o lucro do período (combine com o contador)');
+  } else notas.push('no MEI os impostos são fixos no DAS mensal e não incidem sobre cada venda');
+  return { valores: v, notas, regime: (REGIMES.find((r) => r[0] === c.regime) || [, c.regime])[1] };
+}
+// Sugestões para Grupo, Subgrupo e Classe (somadas às que já foram cadastradas).
+const GRUPOS_SUGERIDOS = {
+  'LIMPEZA': ['ÁGUA SANITÁRIA', 'ALVEJANTES', 'AMACIANTES', 'CERAS E LUSTRA-MÓVEIS', 'DESENGORDURANTES', 'DESINFETANTES', 'DETERGENTES', 'LIMPA VIDROS', 'LIMPADORES MULTIUSO', 'SABÃO EM BARRA', 'SABÃO EM PÓ', 'SABÃO LÍQUIDO', 'SAPONÁCEOS'],
+  'HIGIENE': ['ÁLCOOL', 'ÁLCOOL EM GEL', 'PAPEL HIGIÊNICO', 'PAPEL TOALHA', 'SABONETES', 'GUARDANAPOS', 'LENÇOS'],
+  'DESCARTÁVEIS': ['COPOS', 'PRATOS E TALHERES', 'SACOS DE LIXO', 'LUVAS', 'EMBALAGENS', 'TOUCAS E MÁSCARAS'],
+  'UTENSÍLIOS': ['BALDES', 'DISPENSERS', 'ESPONJAS', 'PÁS E ESCOVAS', 'PANOS E FLANELAS', 'VASSOURAS E RODOS', 'LIXEIRAS'],
+  'AROMATIZANTES': ['AROMATIZADORES', 'ODORIZADORES', 'PEDRAS SANITÁRIAS'],
+  'PISCINA': ['CLORO', 'ALGICIDAS', 'CLARIFICANTES'],
+};
+const CLASSES_SUGERIDAS = ['LINHA DOMÉSTICA', 'LINHA PROFISSIONAL', 'LINHA INSTITUCIONAL', 'CONCENTRADO', 'PRONTO USO', 'REFIL'];
 function calcPreco(custo, f) {
   const soma = (l) => l.reduce((s, k) => s + (Number(f[k]) || 0), 0);
   const custoFinal = (Number(custo) || 0) * (1 + (soma(P_ACRESC) - soma(P_CREDITOS)) / 100);
@@ -417,20 +492,29 @@ async function formProduto(p, depois) {
   const codigos = [...(p.ean ? [p.ean] : []), ...(Array.isArray(p.barcodes) ? p.barcodes.filter((c) => c !== p.ean) : [])];
   const embalagens = Array.isArray(p.packages) ? p.packages.map((x) => ({ ...x })) : [];
   // Listas para sugerir fabricante, grupo, subgrupo e classe já usados.
-  let listas = { brand: [], group_name: [], subgroup: [], class_name: [] };
-  try { const rs = await ok(sb.from('products').select('brand,group_name,subgroup,class_name').limit(5000)); Object.keys(listas).forEach((k) => (listas[k] = [...new Set(rs.map((r) => r[k]).filter(Boolean))].sort())); } catch { /* segue sem sugestões */ }
+  let listas = { brand: [], group_name: [], subgroup: [], class_name: [] }, pares = [];
+  try { const rs = await ok(sb.from('products').select('brand,group_name,subgroup,class_name').limit(5000)); pares = rs.filter((r) => r.group_name && r.subgroup); Object.keys(listas).forEach((k) => (listas[k] = [...new Set(rs.map((r) => r[k]).filter(Boolean))].sort())); } catch { /* segue sem sugestões */ }
+  // Código interno: dado pelo sistema (o próximo número livre), o usuário não digita.
+  let proxCodigo = 'automático';
+  if (!p.id) try { const n = await ok(sb.rpc('proximo_codigo_produto')); if (n) proxCodigo = n + ' (automático)'; } catch { /* mostra só "automático" */ }
   const dl = (id, l) => `<datalist id="${id}">${l.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>`;
   const dec = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
-  const campo = (k) => `<div class="pc"><label>${CAMPOS_PRECO[k]} %</label><input data-pr="${k}" inputmode="decimal" value="${dec(f[k])}"></div>`;
+  const campo = (k) => P_VENDA.includes(k) ? `<div class="pc"><label>${CAMPOS_PRECO[k]} % 🔒</label><input data-pr="${k}" inputmode="decimal" value="${dec(f[k])}" readonly tabindex="-1" class="auto"></div>` : `<div class="pc"><label>${CAMPOS_PRECO[k]} %</label><input data-pr="${k}" inputmode="decimal" value="${dec(f[k])}"></div>`;
+  // Grupo, subgrupo e classe: lista suspensa com sugestões + "Cadastrar novo".
+  const uniq = (l) => [...new Set(l.filter(Boolean).map((x) => String(x).toUpperCase()))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const opGrupos = () => uniq([...Object.keys(GRUPOS_SUGERIDOS), ...listas.group_name]);
+  const opSub = (g) => uniq([...(GRUPOS_SUGERIDOS[String(g || '').toUpperCase()] || []), ...pares.filter((r) => !g || String(r.group_name).toUpperCase() === String(g).toUpperCase()).map((r) => r.subgroup), ...(g ? [] : listas.subgroup)]);
+  const opClasse = () => uniq([...CLASSES_SUGERIDAS, ...listas.class_name]);
+  const combo = (nome, valor, ops) => { const v = String(valor || '').toUpperCase(); const l = v && !ops.includes(v) ? [v, ...ops] : ops; return `<select name="${nome}" data-combo="${nome}"><option value="">— escolha —</option>${l.map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}<option value="__novo">＋ Cadastrar novo…</option></select>`; };
   $('#form').innerHTML = `<div class="card ficha"><h2 style="margin-top:0">${p.id ? 'Editar produto ' + esc(p.code) : 'Novo produto'} <small style="color:var(--muted);font-weight:400">(campos com * são obrigatórios)</small></h2>
   <div class="abas-ficha"><button type="button" data-aba="dados" class="ativa">Dados do produto</button><button type="button" data-aba="preco">Formação de preço</button><button type="button" data-aba="trib">Tributos</button><button type="button" data-aba="emb">Códigos e embalagens</button></div>
   <form id="fp" novalidate>
   <div data-painel="dados">
-    <div class="linha"><div style="flex:0 1 150px"><label>Código interno *</label><input name="code" value="${esc(p.code)}"></div><div style="flex:0 1 170px"><label>Cód. fabricante</label><input name="mfr_code" value="${esc(p.mfr_code)}"></div><div><label>Fabricante / marca *</label><input name="brand" list="dlMarca" value="${esc(p.brand)}"></div></div>
+    <div class="linha"><div style="flex:0 1 160px"><label>Código interno</label><input name="code" value="${esc(p.code || '')}" readonly tabindex="-1" class="auto" placeholder="${esc(proxCodigo)}" title="Gerado pelo sistema"></div><div style="flex:0 1 170px"><label>Cód. fabricante</label><input name="mfr_code" value="${esc(p.mfr_code)}"></div><div><label>Fabricante / marca *</label><input name="brand" list="dlMarca" value="${esc(p.brand)}"></div></div>
     <div class="linha"><div style="flex:3 1 300px"><label>Descrição *</label><input name="description" value="${esc(p.description)}"></div><div style="flex:2 1 220px"><label>Descrição PDV (curta)</label><input name="pdv_description" maxlength="40" value="${esc(p.pdv_description)}"></div></div>
-    <div class="linha"><div><label>Grupo</label><input name="group_name" list="dlGrupo" value="${esc(p.group_name)}"></div><div><label>Subgrupo</label><input name="subgroup" list="dlSub" value="${esc(p.subgroup)}"></div><div><label>Classe</label><input name="class_name" list="dlClasse" value="${esc(p.class_name)}"></div></div>
+    <div class="linha"><div><label>Grupo</label>${combo('group_name', p.group_name, opGrupos())}</div><div><label>Subgrupo</label><span id="boxSub">${combo('subgroup', p.subgroup, opSub(p.group_name))}</span></div><div><label>Classe</label>${combo('class_name', p.class_name, opClasse())}</div></div>
     <div class="linha"><div style="flex:0 1 150px"><label>Un. comercial *</label><input name="unit" value="${esc(p.unit || 'UND')}"></div><div style="flex:0 1 150px"><label>Un. tributável</label><input name="unit_tax" value="${esc(p.unit_tax || '')}" placeholder="igual à comercial"></div><div style="flex:0 1 130px"><label>Múltiplo de venda</label><input name="unit_multiple" inputmode="decimal" value="${dec(p.unit_multiple)}"></div><div style="flex:0 1 130px"><label>Estoque</label><input name="stock" inputmode="decimal" value="${dec(p.stock ?? 0)}"></div></div>
-    <div class="linha"><div><label>Localizador</label><input name="location" value="${esc(p.location)}"></div><div><label>Prateleira</label><input name="shelf" value="${esc(p.shelf)}"></div><div><label>Último fornecedor</label><input value="${esc(p.last_supplier || '')}" disabled></div><div style="flex:0 1 150px"><label>Vlr. últ. compra</label><input value="${p.last_purchase_price != null ? brl(p.last_purchase_price) : ''}" disabled></div></div>
+    <div class="linha"><div><label>Localizador</label><input name="location" value="${esc(p.location)}"></div><div><label>Prateleira</label><input name="shelf" value="${esc(p.shelf)}"></div><div><label>Último fornecedor</label><input value="${esc(p.last_supplier || '')}" disabled></div><div style="flex:0 1 200px"><label>Vlr. últ. compra</label><div class="com-botao"><input value="${p.last_purchase_price != null ? brl(p.last_purchase_price) : ''}" disabled>${p.id ? '<button type="button" class="btn mini" id="histCompras" title="Histórico de compras deste produto">＋</button>' : ''}</div></div></div>
     <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" name="inativo" style="width:auto" ${p.active === false ? 'checked' : ''}> Inativar produto (não aparece mais nos orçamentos)</label>
   </div>
   <div data-painel="preco" hidden>
@@ -441,7 +525,7 @@ async function formProduto(p, depois) {
       <div class="card"><h3>Preço de venda</h3><div class="pcs">${P_VENDA.map(campo).join('')}</div>
         <div class="pcs"><div class="pc"><label>M. lucro % *</label><input data-pr="margem" inputmode="decimal" value="${dec(f.margem)}"></div><div class="pc"><label>Fator mark-up</label><input id="fator" disabled></div></div>
         <div class="pcs"><div class="pc destaque"><label>Sugestão vlr. venda</label><input id="sugerido" disabled></div><div class="pc"><label>PMZ (sem lucro)</label><input id="pmz" disabled></div></div>
-        <button type="button" class="btn" id="usarSug">Usar a sugestão como preço</button></div>
+        <button type="button" class="btn" id="usarSug">Usar a sugestão como preço</button><p class="dica" id="notaImp" style="margin:10px 0 0"></p></div>
     </div>
     <div class="linha"><div style="flex:0 1 200px"><label>Preço de venda R$ *</label><input name="price" inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:2 1 300px;align-self:flex-end"><p class="dica" id="lucros" style="margin:0"></p></div></div>
   </div>
@@ -458,7 +542,7 @@ async function formProduto(p, depois) {
     <button type="button" class="btn" id="addEmb" style="margin-top:6px">＋ Embalagem</button>
   </div>
   <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${p.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div>
-  </form>${dl('dlMarca', listas.brand)}${dl('dlGrupo', listas.group_name)}${dl('dlSub', listas.subgroup)}${dl('dlClasse', listas.class_name)}</div>`;
+  </form>${dl('dlMarca', listas.brand)}</div>`;
   $('#form').scrollIntoView({ behavior: 'smooth' });
   const fp = $('#fp');
   const abrir = (aba) => { $$('[data-aba]').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === aba)); $$('[data-painel]').forEach((d) => (d.hidden = d.dataset.painel !== aba)); };
@@ -474,6 +558,40 @@ async function formProduto(p, depois) {
     return c;
   };
   $('#usarSug').onclick = () => { const c = calc(); if (c.preco) { fp.price.value = dec(c.preco); S.sujo = true; calc(); } };
+  // Impostos da venda: recalculados quando muda o NCM ou o CSOSN (aba Tributos).
+  const atualizarImpostos = () => {
+    const im = impostosVenda({ ncm: fp.ncm.value, cst: fp.cst.value });
+    Object.entries(im.valores).forEach(([k, v]) => { f[k] = v; const i = $(`[data-pr="${k}"]`); if (i) i.value = dec(v); });
+    $('#notaImp').innerHTML = `🔒 Calculado pelo sistema · regime <b>${esc(im.regime)}</b>${im.notas.length ? ' · ' + im.notas.map(esc).join(' · ') : ''}. Custo operac., comissão, outros e enc. financ. seguem o <b>Admin › Formação de preços</b>.`;
+    calc();
+  };
+  fp.ncm.addEventListener('input', atualizarImpostos); fp.cst.addEventListener('change', atualizarImpostos);
+  // Grupo / subgrupo / classe: "＋ Cadastrar novo…" pede o nome e já deixa escolhido.
+  const ROT_COMBO = { group_name: 'grupo', subgroup: 'subgrupo', class_name: 'classe' };
+  const ligarCombo = (sel) => {
+    let ant = sel.value;
+    sel.onchange = async () => {
+      if (sel.value === '__novo') {
+        const r = await dialogo(`<h2 style="margin-top:0">Cadastrar ${ROT_COMBO[sel.name]}</h2><label>Nome do ${ROT_COMBO[sel.name]}</label><input id="dNovo" maxlength="40">`, 'Adicionar', () => $('#dNovo').value.trim().toUpperCase(), () => setTimeout(() => $('#dNovo').focus(), 30));
+        if (!r) { sel.value = ant; return; }
+        if (![...sel.options].some((o) => o.value === r)) sel.add(new Option(r, r), sel.options[sel.options.length - 1]);
+        sel.value = r;
+      }
+      ant = sel.value; S.sujo = true;
+      if (sel.name === 'group_name') { $('#boxSub').innerHTML = combo('subgroup', '', opSub(sel.value)); ligarCombo(fp.subgroup); }
+    };
+  };
+  $$('#fp [data-combo]').forEach(ligarCombo);
+  // (+) Histórico das compras anteriores do produto.
+  if ($('#histCompras')) $('#histCompras').onclick = async () => {
+    try {
+      const h = await ok(sb.rpc('historico_compras', { p_product: p.id }));
+      await dialogo(`<h2 style="margin-top:0">Histórico de compras</h2><p style="color:var(--muted);margin-top:0">${esc(p.code)} · ${esc(p.description)}</p>
+        ${h.length ? `<div class="tabela"><table><thead><tr><th>Data</th><th>NF</th><th>Fornecedor</th><th class="num">Qtd</th><th class="num">Custo na nota</th><th class="num">Custo / un.</th><th>Lote · validade</th></tr></thead><tbody>
+        ${h.map((x) => `<tr><td>${dataBR(x.data)}</td><td>${esc(x.nota || '')}</td><td>${esc(x.fornecedor || '')}</td><td class="num">${dec(x.quantidade)} ${esc(x.unidade || '')}${Number(x.fator) > 1 ? ' ×' + dec(x.fator) : ''}</td><td class="num">${brl(x.custo_nota)}</td><td class="num"><b>${brl(x.custo_unidade)}</b></td><td><small>${esc(x.lote || '—')}${x.validade ? ' · ' + dataBR(x.validade) : ''}</small></td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="vazio">Nenhuma compra registrada para este produto. As compras entram pela entrada de nota fiscal.</p>'}`, 'Fechar', null, () => $('.fundo-dialogo:last-child .dialogo').classList.add('largo'));
+    } catch (e) { falhou(e); }
+  };
   [...$$('[data-pr]'), fp.cost, fp.price].forEach((i) => i.addEventListener('input', calc));
   // Códigos de barras
   const desenharCodigos = () => { $('#codigos').innerHTML = codigos.map((c, k) => `<span class="chip">${esc(c)}${k === 0 ? ' <small>(principal)</small>' : ''} <a href="#" data-xc="${k}" style="color:var(--red);text-decoration:none">✕</a></span>`).join(' ') || '<p class="vazio" style="padding:4px">Nenhum código de barras.</p>'; $$('[data-xc]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); codigos.splice(a.dataset.xc, 1); S.sujo = true; desenharCodigos(); })); };
@@ -487,28 +605,31 @@ async function formProduto(p, depois) {
     $$('#embs [data-xe]').forEach((b) => (b.onclick = () => { embalagens.splice(b.dataset.xe, 1); S.sujo = true; desenharEmb(); }));
   }
   $('#addEmb').onclick = () => { embalagens.push({ unit: 'CX', factor: 12, margin: f.margem, ean: '', price: null }); S.sujo = true; desenharEmb(); };
-  desenharCodigos(); calc();
+  desenharCodigos(); atualizarImpostos();
   $('#cancela').onclick = () => ($('#form').innerHTML = '');
   if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir este produto?')) return; try { await ok(sb.from('products').delete().eq('id', p.id)); aviso('Produto excluído.'); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
   fp.onsubmit = async (e) => {
     e.preventDefault(); const d = Object.fromEntries(new FormData(fp)); lerPr();
     // Obrigatórios: mostra a aba onde falta e marca o campo em vermelho.
-    const obrig = [['code', 'dados', 'código'], ['brand', 'dados', 'fabricante'], ['description', 'dados', 'descrição'], ['unit', 'dados', 'unidade'], ['cost', 'preco', 'custo'], ['price', 'preco', 'preço de venda']];
+    const obrig = [['brand', 'dados', 'fabricante'], ['description', 'dados', 'descrição'], ['unit', 'dados', 'unidade'], ['cost', 'preco', 'custo'], ['price', 'preco', 'preço de venda']];
     $$('#fp .falta').forEach((i) => i.classList.remove('falta'));
     const faltam = obrig.filter(([n]) => !String(d[n] ?? '').trim() || (['cost', 'price'].includes(n) && !num(d[n])));
     if (faltam.length) { faltam.forEach(([n]) => fp[n].classList.add('falta')); abrir(faltam[0][1]); return aviso('Preencha: ' + faltam.map((x) => x[2]).join(', '), true); }
     const ncm = soDig(d.ncm); if (ncm && ncm.length !== 8) { abrir('trib'); fp.ncm.classList.add('falta'); return aviso('O NCM precisa ter 8 números.', true); }
     const reg = {
-      code: d.code.trim(), mfr_code: d.mfr_code.trim() || null, description: d.description.trim().toUpperCase(), pdv_description: d.pdv_description.trim().toUpperCase() || null,
+      ...(p.id ? {} : { code: null }), mfr_code: d.mfr_code.trim() || null, description: d.description.trim().toUpperCase(), pdv_description: d.pdv_description.trim().toUpperCase() || null,
       brand: d.brand.trim().toUpperCase(), group_name: d.group_name.trim().toUpperCase() || null, subgroup: d.subgroup.trim().toUpperCase() || null, class_name: d.class_name.trim().toUpperCase() || null,
       unit: d.unit.trim().toUpperCase(), unit_tax: d.unit_tax.trim().toUpperCase() || null, unit_multiple: d.unit_multiple ? num(d.unit_multiple) : null, stock: num(d.stock),
       location: d.location.trim() || null, shelf: d.shelf.trim() || null, active: !d.inativo,
-      cost: num(d.cost), price: num(d.price), pricing: { ...f }, freight_pct: f.frete, tax_pct: f.trib_fed, other_pct: f.outros_c, margin_pct: f.margem,
+      cost: num(d.cost), price: num(d.price), pricing: { ...f }, freight_pct: f.frete, tax_pct: r2((Number(f.ipi) || 0) + (Number(f.st) || 0)), other_pct: f.outros_c, margin_pct: f.margem,
       ncm: ncm || null, cest: soDig(d.cest) || null, cfop: soDig(d.cfop) || null, origin: d.origin, cst: d.cst,
       ean: codigos[0] || null, barcodes: codigos.length ? codigos : null, packages: embalagens.length ? embalagens.map((x) => ({ ean: soDig(x.ean) || null, unit: x.unit || 'CX', factor: num(x.factor) || 1, margin: x.margin ?? f.margem, price: x.price || calcPreco(num(d.cost) * (num(x.factor) || 1), { ...f, margem: x.margin ?? f.margem }).preco })) : null,
       updated_at: new Date().toISOString(),
     };
-    try { await ok(p.id ? sb.from('products').update(reg).eq('id', p.id) : sb.from('products').insert(reg)); aviso('Produto salvo.'); $('#form').innerHTML = ''; depois(); }
+    try {
+      const salvo = await ok(p.id ? sb.from('products').update(reg).eq('id', p.id).select('code').single() : sb.from('products').insert(reg).select('code').single());
+      aviso(p.id ? 'Produto salvo.' : `Produto salvo com o código ${salvo.code}.`); $('#form').innerHTML = ''; depois();
+    }
     catch (err) { falhou(String(err.message || err).includes('products_code_key') ? 'já existe um produto com este código interno' : err); }
   };
 }
@@ -625,7 +746,8 @@ async function telaEditorOrcamento(id, codCliente) {
     <div><label>CPF ou CNPJ <small id="docst"></small></label><input id="doc" value="${esc(q.client_doc)}" inputmode="numeric" placeholder="Só números"></div>
     <div style="flex:2 1 260px"><label>Nome / Razão social</label><input id="nome" value="${esc(q.client_name)}"></div></div>
     <div class="linha"><div><label>Telefone / WhatsApp</label><input id="fone" value="${esc(q.client_phone)}" inputmode="tel"></div><div><label>E-mail</label><input id="email" value="${esc(q.client_email)}" type="email"></div></div>
-    <label>Observações</label><textarea id="obs">${esc(q.observations)}</textarea></div>
+    <div style="margin-top:10px"><button type="button" class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button></div>
+    <div id="obsBox" ${q.observations ? '' : 'hidden'}><label>📝 Informação adicional (sai no PDF)</label><textarea id="obs" placeholder="Ex.: entrega na sexta pela manhã, pagamento em 2x, falar com Maria…">${esc(q.observations)}</textarea></div></div>
   <p class="vazio card" id="avisoCli">👆 Preencha o cliente (código, busca ou nome) para adicionar os produtos.</p>
   <div id="etapaProd" hidden>
   <div class="card"><h2 style="margin-top:0">Produtos</h2><input id="bp" placeholder="Palavras-chave do produto (ex.: detergente 5l) • do mais barato ao mais caro"><div id="sug"></div>
@@ -635,6 +757,7 @@ async function telaEditorOrcamento(id, codCliente) {
   // Os produtos só aparecem depois que o cliente estiver preenchido (nome com pelo menos 3 letras).
   const etapa = () => { const okCli = $('#nome').value.trim().length >= 3; const antes = $('#etapaProd').hidden; $('#etapaProd').hidden = !okCli; $('#avisoCli').hidden = okCli; if (antes && okCli && !id) setTimeout(() => $('#bp').focus(), 50); };
   $('#nome').addEventListener('input', etapa);
+  $('#obsBtn').onclick = () => { $('#obsBox').hidden = !$('#obsBox').hidden; if (!$('#obsBox').hidden) $('#obs').focus(); };
 
   const desenhar = () => {
     $('#carrinho').innerHTML = itens.map((i, n) => `<tr><td>${esc(i.description)}<br><small style="color:var(--muted)">${esc(i.code)} · ${esc(i.brand || '')} · ${esc(i.unit || '')}</small></td>
@@ -743,14 +866,20 @@ async function telaOrcamento(id) {
     <a class="btn" target="_blank" href="https://wa.me/${soDig(q.client_phone).length >= 10 ? '55' + soDig(q.client_phone).replace(/^55/, '') : ''}?text=${encodeURIComponent('Olá! Segue o orçamento nº ' + q.number + ' da HIGIVARO: ' + link)}">Enviar no WhatsApp</a>
     <button class="btn" id="copiar">Copiar link</button>
     ${q.status !== 'vendido' ? '<a class="btn" href="#/orcamento/' + id + '/editar">Editar</a><button class="btn pri" id="vender">Confirmar venda</button>' : venda ? `<a class="btn" href="#/venda/${venda.id}">Ver venda nº ${esc(venda.number)}</a>` : ''}
+    <button class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button>
     ${ehAdmin() && q.status !== 'vendido' ? '<button class="btn perigo" id="apagar">Excluir</button>' : ''}
   </div>
-  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small>${q.observations ? `<p>${esc(q.observations)}</p>` : ''}</div>
+  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small></div>
+  ${q.observations ? `<div class="card obs-doc"><b>📝 Informação adicional</b> <small>(sai no PDF)</small><p>${esc(q.observations)}</p></div>` : ''}
   ${tabelaItens(itens, q.discount_percent)}
   ${logs.length ? `<h2>Histórico de edições</h2><div class="card">${logs.map((l) => `${new Date(l.created_at).toLocaleString('pt-BR')} · ${esc(l.editor_name)} · ${brl(l.total)}`).join('<br>')}</div>` : ''}`;
   $('#pdf').onclick = () => pdfDocumento('ORÇAMENTO', q, itens).catch(falhou);
   $('#copiar').onclick = () => navigator.clipboard.writeText(link).then(() => aviso('Link copiado.'), () => prompt('Copie o link:', link));
   if ($('#vender')) $('#vender').onclick = () => confirmarVenda(q, itens);
+  $('#obsBtn').onclick = async () => {
+    const r = await editarObs(q.observations, 'orçamento'); if (r === null) return;
+    try { await ok(sb.from('quotes').update({ observations: r || null }).eq('id', id)); aviso('Informação salva.'); telaOrcamento(id); } catch (e) { falhou(e); }
+  };
   if ($('#apagar')) $('#apagar').onclick = async () => { if (!confirm('Excluir o orçamento nº ' + q.number + '?')) return; try { await ok(sb.from('quotes').delete().eq('id', id)); location.hash = '#/orcamentos'; } catch (e) { falhou(e); } };
 }
 function tabelaItens(itens, pct, comDesc = false) {
@@ -786,7 +915,7 @@ function dialogo(html, rotuloOk, ler, aoAbrir) {
     const fechar = (v) => { fundo.remove(); fim(v); };
     $('#dCancela').onclick = () => fechar(null);
     fundo.onclick = (e) => { if (e.target === fundo) fechar(null); };
-    $('#dOk').onclick = () => fechar(ler ? ler() : true);
+    $('#dOk').onclick = () => { const v = ler ? ler() : true; if (v !== undefined) fechar(v); }; // undefined = algo faltando, a janela fica aberta
   });
 }
 const diasAtraso = (venc) => Math.floor((new Date(hoje()) - new Date(String(venc).slice(0, 10))) / 864e5);
@@ -824,9 +953,10 @@ async function telaVendas(modo) {
 async function telaVenda(id) {
   const [v, itens] = await Promise.all([ok(sb.from('sales').select('*').eq('id', id).single()), ok(sb.from('sale_items').select('*').eq('sale_id', id).order('description'))]);
   app.innerHTML = `${barraVoltar('Venda nº ' + esc(v.number) + ' ' + statusSelo(v.status), '#/vendas')}
-  <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
+  <div class="acoes topo"><button class="btn azul" id="pdf">PDF da venda</button><button class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button>${v.status === 'confirmada' ? '<button class="btn perigo" id="devolver">Registrar devolução</button>' : ''}</div>
   <div class="card">${v.client_code ? `<span class="selo">cliente ${v.client_code}</span> ` : ""}<b>${esc(v.client_name)}</b> ${v.client_doc ? '· ' + esc(v.client_doc) : ''}<br>${esc(v.client_phone || '')} ${esc(v.client_email || '')}<br><small style="color:var(--muted)">${dataBR(v.date)} ${esc(v.time)} · por ${esc(v.employee_name || '')} · orçamento nº <a href="#/orcamento/${v.quote_id}">${esc(v.quote_number)}</a></small>
-  ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}</p>` : ''}</div>
+  ${v.status === 'devolvida' ? `<p style="color:#9a6700">Devolvida em ${dataBR(v.returned_date)} por ${esc(v.returned_by_name || '')}${v.return_reason ? `<br>Motivo: <b>${esc(v.return_reason)}</b>` : ''}</p>` : ''}</div>
+  ${v.observations ? `<div class="card obs-doc"><b>📝 Informação adicional</b> <small>(sai no PDF)</small><p>${esc(v.observations)}</p></div>` : ''}
   ${v.status === 'confirmada' ? `<div class="card"><b>Pagamento</b> ${seloPagamento(v)}<br>
     ${esc(v.payment_method || 'forma não informada')} · vencimento ${dataBR(v.due_date) || '—'}${v.payment_status === 'recebido' ? ` · recebido em ${dataBR(v.received_at)}${v.received_by ? ' por ' + esc(v.received_by) : ''}` : ''}
     <div class="acoes">${v.payment_status === 'aberto' ? '<button class="btn pri" id="receber">Marcar como recebido</button><button class="btn" id="vencimento">Mudar vencimento</button>' : '<button class="btn" id="reabrir">Voltar para "a receber"</button>'}</div></div>` : ''}
@@ -843,11 +973,84 @@ async function telaVenda(id) {
     const r = await dialogo(`<h2 style="margin-top:0">Novo vencimento</h2><input type="date" id="dVenc" value="${String(v.due_date || hoje()).slice(0, 10)}">`, 'Salvar', () => $('#dVenc').value);
     if (r) atualizar({ due_date: r }, 'Vencimento alterado.');
   };
+  $('#obsBtn').onclick = async () => { const r = await editarObs(v.observations, 'venda'); if (r !== null) atualizar({ observations: r || null }, 'Informação salva.'); };
   if ($('#reabrir')) $('#reabrir').onclick = () => { if (confirm('Voltar a venda nº ' + v.number + ' para "a receber"?')) atualizar({ payment_status: 'aberto', received_at: null, received_by: null }, 'Venda voltou para "a receber".'); };
+  // Devolução: o motivo é obrigatório (aparece na venda e em Financeiro › Devoluções).
   if ($('#devolver')) $('#devolver').onclick = async () => {
-    if (!confirm('Registrar a devolução da venda nº ' + v.number + '? O estoque volta e a venda sai do financeiro.')) return;
-    try { await ok(sb.rpc('devolver_venda', { p_sale: id })); aviso('Devolução registrada.'); telaVenda(id); } catch (e) { falhou(e); }
+    const motivo = await dialogo(`<h2 style="margin-top:0">Devolução da venda nº ${esc(v.number)}</h2><p>${esc(v.client_name)} · <b>${brl(v.total)}</b><br><small style="color:var(--muted)">O estoque volta e a venda sai do financeiro.</small></p>
+      <label>Motivo da devolução *</label><textarea id="dMotivo" rows="3" placeholder="Ex.: produto com defeito, item trocado, cliente desistiu…"></textarea>`, 'Registrar devolução',
+      () => { const m = $('#dMotivo').value.trim(); if (m.length < 5) { $('#dMotivo').classList.add('falta'); aviso('Explique o motivo da devolução.', true); return undefined; } return m; },
+      () => setTimeout(() => $('#dMotivo').focus(), 30));
+    if (!motivo) return;
+    try { await ok(sb.rpc('devolver_venda', { p_sale: id, p_motivo: motivo })); aviso('Devolução registrada.'); telaVenda(id); } catch (e) { falhou(e); }
   };
+}
+// Janela para escrever a informação adicional do orçamento/venda (sai no PDF). Devolve o texto, ou null se cancelar.
+function editarObs(atual, doc) {
+  return dialogo(`<h2 style="margin-top:0">📝 Informação adicional</h2><p style="color:var(--muted);margin-top:0">Sai no PDF do ${doc}, no quadro "Observações".</p><textarea id="dObs" rows="5" placeholder="Ex.: entrega na sexta, pagamento em 2x, falar com Maria…">${esc(atual || '')}</textarea>`,
+    'Salvar', () => $('#dObs').value.trim(), () => setTimeout(() => $('#dObs').focus(), 30));
+}
+
+// ---------- financeiro: quitadas e devoluções ----------
+// Quitadas: vendas já recebidas e (para o administrador) despesas já pagas, pela data da quitação.
+async function telaQuitadas() {
+  const adm = ehAdmin();
+  app.innerHTML = `${abasFinanceiro('quitadas')}
+  <div class="linha"><div style="flex:0 1 200px"><label>Mês da quitação</label><input id="mes" type="month" value="${hoje().slice(0, 7)}" title="Vazio = todos os meses"></div>
+    ${adm ? '<div style="flex:0 1 230px"><label>Mostrar</label><select id="tipo"><option value="">Recebidas e pagas</option><option value="r">Só recebidas (vendas)</option><option value="p">Só pagas (despesas)</option></select></div>' : ''}
+    <div><label>Buscar</label><input id="busca" placeholder="Cliente, fornecedor, descrição ou nº"></div></div>
+  <p style="color:var(--muted);margin:6px 0 0;font-size:13px">Mês vazio = todos os meses. Clique numa linha para abrir.</p>
+  <div class="acoes"><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div>
+  <div id="kpis" class="grade" style="margin-top:12px"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Quitada em</th><th>Tipo</th><th>Documento</th><th>Cliente / fornecedor</th><th class="esconde-cel">Forma</th><th class="num">Valor</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let linhas = [];
+  const soma = (tp) => linhas.filter((l) => l.tipo === tp).reduce((s, l) => s + l.valor, 0);
+  const carregar = async () => {
+    const m = $('#mes').value, tipo = adm ? $('#tipo').value : 'r', t = limpaBusca($('#busca').value);
+    const [a, b] = m ? mesRange(m) : [null, null]; const tarefas = [];
+    if (tipo !== 'p') {
+      let q = sb.from('sales').select('id,number,client_name,client_code,total,payment_method,received_at').eq('status', 'confirmada').eq('payment_status', 'recebido').order('received_at', { ascending: false }).limit(2000);
+      if (a) q = q.gte('received_at', a).lte('received_at', b); if (t) q = q.or(`client_name.ilike.%${t}%,number.ilike.%${t}%`);
+      tarefas.push(ok(q).then((l) => l.map((v) => ({ tipo: 'r', id: v.id, data: v.received_at, doc: 'Venda nº ' + v.number, quem: (v.client_code ? v.client_code + ' · ' : '') + v.client_name, forma: v.payment_method || '', valor: Number(v.total) }))));
+    }
+    if (adm && tipo !== 'r') {
+      let q = sb.from('expenses').select('id,description,supplier,category,amount,paid_at').eq('status', 'pago').order('paid_at', { ascending: false }).limit(2000);
+      if (a) q = q.gte('paid_at', a).lte('paid_at', b); if (t) q = q.or(`description.ilike.%${t}%,supplier.ilike.%${t}%`);
+      tarefas.push(ok(q).then((l) => l.map((d) => ({ tipo: 'p', id: d.id, data: d.paid_at, doc: d.description, quem: d.supplier || d.category || '', forma: '', valor: Number(d.amount) }))));
+    }
+    linhas = (await Promise.all(tarefas)).flat().sort((x, y) => String(y.data).localeCompare(String(x.data)));
+    $('#kpis').innerHTML = `<div class="kpi"><small>Recebido</small><strong style="color:var(--green-d)">${brl(soma('r'))}</strong></div>${adm ? `<div class="kpi"><small>Pago</small><strong style="color:var(--red)">${brl(soma('p'))}</strong></div><div class="kpi"><small>Saldo (recebido − pago)</small><strong>${brl(soma('r') - soma('p'))}</strong></div>` : ''}<div class="kpi"><small>Lançamentos</small><strong>${linhas.length}</strong></div>`;
+    $('#lista').innerHTML = linhas.map((l, k) => `<tr class="clica" data-k="${k}"><td>${dataBR(l.data)}</td><td>${l.tipo === 'r' ? '<span class="selo recebido">recebida</span>' : '<span class="selo saida">paga</span>'}</td><td>${esc(l.doc)}</td><td>${esc(l.quem)}</td><td class="esconde-cel">${esc(l.forma)}</td><td class="num"><b style="color:${l.tipo === 'r' ? 'var(--green-d)' : 'var(--red)'}">${l.tipo === 'p' ? '− ' : ''}${brl(l.valor)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nada quitado neste filtro.</td></tr>';
+    $$('#lista tr[data-k]').forEach((tr) => (tr.onclick = () => { const l = linhas[tr.dataset.k]; location.hash = l.tipo === 'r' ? '#/venda/' + l.id : '#/financeiro/despesas'; }));
+  };
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar; if ($('#tipo')) $('#tipo').onchange = carregar;
+  $('#relatorio').onclick = () => pdfTabela('CONTAS QUITADAS', [$('#mes').value ? 'Mês: ' + $('#mes').value.split('-').reverse().join('/') : 'Todos os meses', $('#busca').value.trim() && 'Filtro: ' + $('#busca').value.trim()].filter(Boolean).join(' • '),
+    adm ? [['Recebido', brl(soma('r'))], ['Pago', brl(soma('p'))], ['Saldo', brl(soma('r') - soma('p'))]] : [['Recebido', brl(soma('r'))], ['Lançamentos', String(linhas.length)]],
+    ['Quitada em', 'Tipo', 'Documento', 'Cliente / fornecedor', 'Forma', 'Valor'], linhas.map((l) => [dataBR(l.data), l.tipo === 'r' ? 'Recebida' : 'Paga', l.doc, l.quem, l.forma, (l.tipo === 'p' ? '- ' : '') + brl(l.valor)]),
+    { 0: { cellWidth: 20 }, 1: { cellWidth: 18 }, 4: { cellWidth: 26 }, 5: { cellWidth: 26, halign: 'right', fontStyle: 'bold' } }, 'Quitadas').catch(falhou);
+  carregar();
+}
+// Devoluções: vendas devolvidas, com o motivo informado por quem registrou.
+async function telaDevolucoes(origem) {
+  const topo = origem === 'vendas' ? secao('vendas', '#/vendas/devolvidas') : abasFinanceiro('devolucoes');
+  app.innerHTML = `${topo}<div class="linha"><div style="flex:0 1 200px"><label>Mês da devolução</label><input id="mes" type="month" value="" title="Vazio = todos os meses"></div><div><label>Buscar</label><input id="busca" placeholder="Cliente, nº da venda ou motivo"></div></div>
+  <div class="acoes"><button class="btn azul" id="relatorio">📄 Gerar relatório (PDF)</button></div><div id="kpis" class="grade" style="margin-top:12px"></div>
+  <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Devolvida em</th><th>Venda</th><th>Cliente</th><th class="num">Valor</th><th>Motivo</th><th class="esconde-cel">Registrada por</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  let vs = [];
+  const soma = () => vs.reduce((s, v) => s + Number(v.total), 0);
+  const carregar = async () => {
+    let q = sb.from('sales').select('id,number,client_name,client_code,total,date,returned_date,returned_by_name,return_reason').eq('status', 'devolvida').order('returned_date', { ascending: false }).limit(1000);
+    const m = $('#mes').value; if (m) { const [a, b] = mesRange(m); q = q.gte('returned_date', a).lte('returned_date', b); }
+    const t = limpaBusca($('#busca').value); if (t) q = q.or(`client_name.ilike.%${t}%,number.ilike.%${t}%,return_reason.ilike.%${t}%`);
+    vs = await ok(q);
+    $('#kpis').innerHTML = `<div class="kpi"><small>Devoluções</small><strong>${vs.length}</strong></div><div class="kpi"><small>Valor devolvido</small><strong style="color:var(--red)">${brl(soma())}</strong></div>`;
+    $('#lista').innerHTML = vs.map((v) => `<tr class="clica" onclick="location.hash='#/venda/${v.id}'"><td>${dataBR(v.returned_date)}</td><td>${esc(v.number)}<br><small style="color:var(--muted)">de ${dataBR(v.date)}</small></td><td>${v.client_code ? `<small style="color:var(--muted)">${v.client_code}</small> ` : ''}${esc(v.client_name)}</td><td class="num">${brl(v.total)}</td><td>${v.return_reason ? esc(v.return_reason) : '<small style="color:var(--muted)">não informado</small>'}</td><td class="esconde-cel">${esc(v.returned_by_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma devolução.</td></tr>';
+  };
+  let tt; $('#busca').oninput = () => { clearTimeout(tt); tt = setTimeout(carregar, 300); }; $('#mes').onchange = carregar;
+  $('#relatorio').onclick = () => pdfTabela('DEVOLUÇÕES', $('#mes').value ? 'Mês: ' + $('#mes').value.split('-').reverse().join('/') : 'Todos os meses', [['Devoluções', String(vs.length)], ['Valor devolvido', brl(soma())]],
+    ['Devolvida em', 'Venda', 'Cliente', 'Valor', 'Motivo', 'Por'], vs.map((v) => [dataBR(v.returned_date), v.number, v.client_name, brl(v.total), v.return_reason || 'não informado', v.returned_by_name || '']),
+    { 0: { cellWidth: 20 }, 1: { cellWidth: 14 }, 3: { cellWidth: 22, halign: 'right' }, 5: { cellWidth: 24 } }, 'Devolucoes').catch(falhou);
+  carregar();
 }
 
 // ---------- financeiro ----------
@@ -1262,7 +1465,8 @@ function aplicarPercentuais(it, trocouProduto = false) {
   }
   it.precoManual = false; it.sale_price = it.acao === 'ligar' && p.price ? Number(p.price) : sugerido(it); it.update_price = false;
 }
-const sugerido = (it) => it.produto?.pricing ? calcPreco((it.unit_cost || 0) / (it.factor || 1), { ...it.produto.pricing, frete: it.freight_pct, trib_fed: it.tax_pct, outros_c: it.other_pct, margem: it.margin_pct }).preco : precoSugerido((it.unit_cost || 0) / (it.factor || 1), it.freight_pct, it.tax_pct, it.other_pct, it.margin_pct);
+// Preço sugerido na entrada de nota: mesma formação de preço do cadastro (impostos automáticos + padrões do Admin).
+const sugerido = (it) => calcPreco((it.unit_cost || 0) / (it.factor || 1), { ...pricingPadrao(it.produto || {}), frete: it.freight_pct, ipi: it.tax_pct, st: 0, outros_c: it.other_pct, margem: it.margin_pct }).preco;
 const dec = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
 // Linha de lote/validade e formação de preço de cada item da nota.
 function linhaPreco(it) {
@@ -1271,7 +1475,7 @@ function linhaPreco(it) {
     <div style="flex:0 1 120px"><label>Lote *</label><input data-c="lot" class="${it.lot ? '' : 'falta'}" value="${esc(it.lot || '')}"></div>
     <div style="flex:0 1 150px"><label>Validade *</label><input type="date" data-c="expiry" class="${it.expiry ? '' : 'falta'}" value="${esc(it.expiry || '')}"></div>
     <div style="flex:0 1 80px"><label>Frete %</label><input data-c="freight_pct" inputmode="decimal" value="${dec(it.freight_pct)}"></div>
-    <div style="flex:0 1 90px"><label>Imposto %</label><input data-c="tax_pct" inputmode="decimal" value="${dec(it.tax_pct)}"></div>
+    <div style="flex:0 1 100px"><label>Imp. compra %</label><input data-c="tax_pct" inputmode="decimal" value="${dec(it.tax_pct)}"></div>
     <div style="flex:0 1 80px"><label>Outros %</label><input data-c="other_pct" inputmode="decimal" value="${dec(it.other_pct)}"></div>
     <div style="flex:0 1 90px"><label>Margem % *</label><input data-c="margin_pct" inputmode="decimal" class="${it.margin_pct === '' || it.margin_pct == null ? 'falta' : ''}" value="${dec(it.margin_pct)}"></div>
     <div style="flex:0 1 130px"><label>Preço venda *</label><input data-c="sale_price" inputmode="decimal" class="${it.sale_price > 0 ? '' : 'falta'}" value="${dec(it.sale_price)}"></div>
@@ -1423,9 +1627,9 @@ async function telaAdmin(modo) {
   <div class="card" ${modo === 'empresa' ? '' : 'hidden'}><h2 style="margin-top:0">Empresa</h2><form id="fe"><div class="linha">${campo('name', 'Nome')}${campo('cnpj', 'CNPJ')}</div><div class="linha">${campo('phone', 'Telefone')}${campo('email', 'E-mail')}</div>
   <div class="linha">${campo('address', 'Endereço')}${campo('monthly_goal', 'Meta mensal (R$)', 'inputmode="decimal"')}</div>
   <label>Texto padrão no rodapé do orçamento</label><textarea name="observations_text">${esc(e.observations_text || '')}</textarea>
-  <h2>Formação de preço (padrão para todos os produtos)</h2><p style="color:var(--muted);margin-top:0">Usado na entrada de nota e no cadastro de produto. Preço de venda = custo × (1 + frete% + imposto% + outros%) × (1 + margem%). Cada produto pode ter os seus próprios valores.</p>
-  <div class="linha">${campo('default_margin_pct', 'Margem de lucro (%)', 'inputmode="decimal"')}${campo('default_freight_pct', 'Frete (%)', 'inputmode="decimal"')}${campo('default_tax_pct', 'Impostos (%)', 'inputmode="decimal"')}${campo('default_other_pct', 'Outros custos (%)', 'inputmode="decimal"')}</div>
+  <p class="dica">A formação de preço (margem, frete, comissão, regime de impostos) agora fica em <a href="#/admin/precos">Admin › Formação de preços</a>.</p>
   <div class="acoes"><button class="btn pri">Salvar empresa</button></div></form></div>
+  ${modo === 'precos' ? formPrecosAdmin(e) : ''}
   <div ${modo === 'usuarios' ? '' : 'hidden'}><div class="acoes" style="margin-top:0"><button class="btn pri" id="novoUsuario">＋ Novo usuário</button></div><div id="formUsuario"></div></div>
   <div class="card" ${modo === 'usuarios' ? '' : 'hidden'}><h2 style="margin-top:0">Usuários</h2><p style="color:var(--muted);margin-top:0">Use <b>＋ Novo usuário</b> para cadastrar com e-mail e senha temporária: no primeiro acesso a pessoa é obrigada a criar a senha pessoal. Em <b>Pode acessar</b>, marque as áreas de cada vendedor (administrador acessa tudo; Notas fiscais, Despesas e Admin são só do administrador).</p>
   <div class="tabela"><table><thead><tr><th>Nº login</th><th>Nome</th><th class="esconde-cel">E-mail</th><th>Acesso</th><th>Tipo</th><th>Ativo</th><th>Pode acessar</th><th></th></tr></thead><tbody>
@@ -1489,9 +1693,9 @@ async function telaAdmin(modo) {
     const tr = el.closest('tr'); const perms = $$('[data-perm]', tr).filter((x) => x.checked).map((x) => x.dataset.perm);
     try { await ok(sb.from('profiles').update({ permissions: perms }).eq('id', tr.dataset.id)); aviso('Permissões salvas.'); } catch (err) { falhou(err); }
   }));
+  if (modo === 'precos') ligarPrecosAdmin(e);
   $('#fe').onsubmit = async (ev) => {
     ev.preventDefault(); const f = Object.fromEntries(new FormData(ev.target)); f.monthly_goal = num(f.monthly_goal);
-    ['default_margin_pct', 'default_freight_pct', 'default_tax_pct', 'default_other_pct'].forEach((k) => (f[k] = num(f[k])));
     try { await ok(sb.from('company_settings').update(f).eq('id', 1)); S.empresa = { ...S.empresa, ...f }; aviso('Empresa salva.'); } catch (err) { falhou(err); }
   };
   $$('tr[data-id] [data-c]').forEach((el) => (el.onchange = async () => {
@@ -1508,7 +1712,46 @@ async function enviarBoasVindas(userId) {
 }
 // Preço de venda sugerido: custo × (1 + frete% + imposto% + outros%) × (1 + margem%).
 const precoSugerido = (custo, f, t, o, m) => Math.round((Number(custo) || 0) * (1 + ((Number(f) || 0) + (Number(t) || 0) + (Number(o) || 0)) / 100) * (1 + (Number(m) || 0) / 100) * 100) / 100;
-const padroesPreco = () => ({ margin_pct: Number(S.empresa?.default_margin_pct ?? 40), freight_pct: Number(S.empresa?.default_freight_pct ?? 0), tax_pct: Number(S.empresa?.default_tax_pct ?? 0), other_pct: Number(S.empresa?.default_other_pct ?? 0) });
+const padroesPreco = () => { const c = configPreco(); return { margin_pct: c.margem, freight_pct: c.frete, tax_pct: 0, other_pct: c.outros_c }; };
+// ---------- Admin › Formação de preços ----------
+// Regime tributário (os impostos de venda são calculados sozinhos) e os padrões que todos os produtos seguem.
+const CAMPOS_PADRAO = [['custo_op', 'Custo operacional %'], ['comissao', 'Comissão %'], ['outros_v', 'Outros (venda) %'], ['enc_fin', 'Encargos financeiros %'], ['margem', 'Margem de lucro padrão %']];
+function formPrecosAdmin(e) {
+  const c = configPreco(e), v = (k) => String(c[k]).replace('.', ',');
+  const inp = (k, rot) => `<div><label>${rot}</label><input name="${k}" inputmode="decimal" value="${v(k)}"></div>`;
+  return `<div class="card"><h2 style="margin-top:0">Formação de preços · padrão para todos os produtos</h2>
+  <p style="color:var(--muted);margin-top:0">Preço de venda = custo final ÷ (1 − (impostos + custos de venda + margem) ÷ 100), igual ao ERP. Os <b>impostos de venda</b> (PIS, Cofins, IR, CSLL, ICMS ou Simples) o sistema calcula sozinho pelo regime abaixo e pelo NCM/CSOSN de cada produto. O resto da coluna "Preço de venda" segue estes padrões; em cada produto só a margem pode mudar.</p>
+  <form id="fpr">
+    <h3>Impostos</h3>
+    <div class="linha"><div style="flex:2 1 260px"><label>Regime tributário da HIGIVARO</label><select name="regime">${REGIMES.map(([k, t]) => `<option value="${k}" ${c.regime === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div id="boxSimples"><label>Alíquota efetiva do Simples %</label><input name="simples" inputmode="decimal" value="${v('simples')}"></div>
+      <div id="boxIcms"><label>ICMS interno (Bahia) %</label><input name="icms" inputmode="decimal" value="${v('icms')}"></div></div>
+    <h3>Coluna "Preço de venda" (vale para todos)</h3>
+    <div class="linha">${CAMPOS_PADRAO.map(([k, r]) => inp(k, r)).join('')}</div>
+    <h3>Coluna "Custo" (valor inicial de produto novo e entrada de nota)</h3>
+    <div class="linha">${inp('frete', 'Frete %')}${inp('outros_c', 'Outros custos %')}</div>
+    <p class="dica" id="exPreco"></p>
+    <p style="color:var(--muted);font-size:13px">Mudar os padrões não altera o preço já gravado nos produtos: o novo cálculo aparece como sugestão ao abrir cada produto ou na próxima entrada de nota.</p>
+    <div class="acoes"><button class="btn pri">Salvar padrões</button></div></form></div>`;
+}
+function ligarPrecosAdmin(e) {
+  const fr = $('#fpr');
+  const ler = () => { const d = Object.fromEntries(new FormData(fr)), pd = {}; ['simples', 'icms', 'frete', 'outros_c', ...CAMPOS_PADRAO.map((x) => x[0])].forEach((k) => (pd[k] = num(d[k]))); return { regime: d.regime, pd }; };
+  const exemplo = () => {
+    const { regime, pd } = ler(); $('#boxSimples').hidden = regime !== 'SIMPLES'; $('#boxIcms').hidden = !['PRESUMIDO', 'REAL'].includes(regime);
+    const cfg = configPreco({ ...e, tax_regime: regime, pricing_defaults: pd }), im = impostosVenda({ ncm: '', cst: '102' }, cfg);
+    const f = { ...Object.fromEntries(Object.keys(CAMPOS_PRECO).map((k) => [k, 0])), frete: cfg.frete, outros_c: cfg.outros_c, custo_op: cfg.custo_op, comissao: cfg.comissao, outros_v: cfg.outros_v, enc_fin: cfg.enc_fin, margem: cfg.margem, ...im.valores };
+    const r = calcPreco(100, f);
+    $('#exPreco').innerHTML = r.fator > 0 ? `Exemplo: produto com custo de <b>R$ 100,00</b> → custo final ${brl(r.custoFinal)} · impostos de venda ${String(Math.round((im.valores.trib_fed + im.valores.pis + im.valores.cofins + im.valores.ir + im.valores.csll + im.valores.icms) * 100) / 100).replace('.', ',')}% · fator ${r.fator.toFixed(4).replace('.', ',')} · <b>preço sugerido ${brl(r.preco)}</b> · PMZ ${brl(r.pmz)}.<br><small>${esc(im.notas.join(' · '))}</small>` : '<b style="color:var(--red)">Impostos + custos de venda + margem chegam a 100% ou mais: não dá para formar preço.</b>';
+  };
+  fr.addEventListener('input', exemplo); fr.addEventListener('change', exemplo); exemplo();
+  fr.onsubmit = async (ev) => {
+    ev.preventDefault(); const { regime, pd } = ler();
+    const upd = { tax_regime: regime, pricing_defaults: pd, default_margin_pct: pd.margem, default_freight_pct: pd.frete, default_other_pct: pd.outros_c, default_tax_pct: 0 };
+    if (calcPreco(100, { ...pd, ...impostosVenda({}, configPreco({ ...e, ...upd })).valores }).fator <= 0) return aviso('Impostos + custos de venda + margem passam de 100%.', true);
+    try { await ok(sb.from('company_settings').update(upd).eq('id', 1)); S.empresa = { ...S.empresa, ...upd }; aviso('Padrões salvos.'); } catch (err) { falhou(err); }
+  };
+}
 
 // ---------- orçamento público (link para o cliente) ----------
 async function telaOrcamentoPublico(id) {
@@ -1676,7 +1919,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   if (obs) {
     const linhas = pdf.splitTextToSize(obs, L - 8);
     if (y + 10 + linhas.length * 4 > 275) { pdf.addPage(); y = 22; }
-    rotulo('Observações', M, y + 2); txt(linhas, M, y + 7, { s: 8.3 }); y += 9 + linhas.length * 4;
+    rotulo('Observações e informações adicionais', M, y + 2); txt(linhas, M, y + 7, { s: 8.3 }); y += 9 + linhas.length * 4;
   }
   if (ehVenda) {
     // Assinaturas: cliente (recebimento) e vendedor, com nome embaixo e data.

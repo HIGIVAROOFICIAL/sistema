@@ -134,3 +134,26 @@ tr.clica:hover td{background:#f7fafd}
 .pc label{margin:6px 0 2px;font-size:12px}
 .pc input{padding:6px 8px;text-align:right}
 .pc.destaque input{background:#fffbea;font-weight:700;color:var(--ink)}
+/* 27/11: código automático, combos, histórico, painel inicial, quitadas */
+input.auto,input[readonly].auto{background:#eef3f9;color:var(--muted);cursor:default}
+.com-botao{display:flex;gap:6px}.com-botao input{flex:1;min-width:0}
+.btn.mini{padding:4px 12px;font-size:18px;line-height:1;font-weight:700;flex:0 0 auto}
+.dialogo.largo{max-width:900px}.dialogo .tabela{max-height:60vh;overflow:auto}
+.selo.saida{background:#fde4e4;color:var(--red)}
+.obs-doc p{margin:6px 0 0;white-space:pre-wrap}.obs-doc small{color:var(--muted)}
+.inicio-logo.pequena{min-height:0;padding:10px 20px 0}.inicio-logo.pequena img{width:min(320px,70vw)}
+.saudacao{text-align:center;color:var(--muted);margin:4px 0 16px;font-size:15px}
+.painel{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px;margin-bottom:24px}
+.janela{display:block;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--azul);border-radius:14px;padding:14px 16px;color:inherit;text-decoration:none;box-shadow:0 2px 8px rgba(3,35,68,.05);transition:transform .12s,box-shadow .12s}
+a.janela[href]:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(3,35,68,.1)}
+.janela.receber{border-top-color:var(--green)}.janela.pagar{border-top-color:var(--red)}.janela.validade{border-top-color:#e0a100}
+.janela h3{margin:0 0 8px;font-size:15px}
+.janela .valor{font-size:24px;font-weight:800;color:var(--ink);margin-bottom:6px}.janela .valor small{display:block;font-size:12px;font-weight:500;color:var(--muted)}
+.janela ul{list-style:none;margin:0;padding:0}.janela li{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed var(--line);font-size:13.5px}
+.janela li span{overflow:hidden;text-overflow:ellipsis}.janela li small{color:var(--muted)}.janela li b{white-space:nowrap}
+.janela .mais{color:var(--muted);display:block;margin-top:4px}.janela .tudo-ok{color:var(--green-d);margin:6px 0}
+.rodape-janela{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:12.5px;color:var(--muted)}
+.ruim{color:var(--red)!important}.atencao{color:#b07800}
+.chips-validade{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}.chips-validade span{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px}
+.chips-validade .v1{background:#fde4e4;color:var(--red)}.chips-validade .v2{background:#fdf0d5;color:#9a6700}.chips-validade .v3{background:#e3effc;color:var(--azul)}
+.linha-resumo{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line);color:inherit;text-decoration:none}.linha-resumo:hover b{color:var(--azul)}
