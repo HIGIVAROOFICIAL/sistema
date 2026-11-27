@@ -220,6 +220,7 @@ function telaLogin(modo = 'entrar') {
       }
       if (modo === 'cadastro') {
         const r = await ok(sb.auth.signUp({ email: f.email, password: f.senha, options: { data: { full_name: f.nome }, emailRedirectTo: location.origin + location.pathname } }));
+        if (r.user) enviarBoasVindas(r.user.id); // e-mail "recebemos seu pedido" + aviso para a empresa
         if (r.session) rotear(); else app.innerHTML = '<div class="card auth"><h1>Confira seu e-mail</h1><p>Enviamos um link de confirmação. Depois de confirmar, entre com seu e-mail e senha.</p><a class="btn" href="#/">Voltar</a></div>';
       }
       if (modo === 'esqueci') {
@@ -1334,7 +1335,7 @@ async function telaAdmin(modo) {
     <td><select data-c="role" ${u.id === S.perfil.id ? 'disabled' : ''}><option value="user" ${u.role === 'user' ? 'selected' : ''}>vendedor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option></select></td>
     <td><input type="checkbox" data-c="active" ${u.active ? 'checked' : ''} ${u.id === S.perfil.id ? 'disabled' : ''} style="width:auto"></td>
     <td>${u.role === 'admin' ? '<small style="color:var(--muted)">tudo (administrador)</small>' : `<div class="permissoes">${AREAS.map(([a, rot]) => `<label><input type="checkbox" data-perm="${a}" ${!Array.isArray(u.permissions) || u.permissions.includes(a) ? 'checked' : ''}> ${rot}</label>`).join('')}</div>`}</td>
-    <td>${u.id === S.perfil.id ? '' : `<button class="btn" data-senha="${u.id}" style="padding:5px 10px;font-size:13px">Nova senha temporária</button>`}${u.must_change_password ? '<br><small style="color:#9a6700">aguardando criar a senha pessoal</small>' : ''}</td></tr>`).join('')}
+    <td>${u.id === S.perfil.id ? '' : `<button class="btn" data-senha="${u.id}" style="padding:5px 10px;font-size:13px">Nova senha temporária</button> <button class="btn perigo" data-apagar="${u.id}" style="padding:5px 10px;font-size:13px">Apagar</button>`}${u.must_change_password ? '<br><small style="color:#9a6700">aguardando criar a senha pessoal</small>' : ''}</td></tr>`).join('')}
   </tbody></table></div></div>`;
   // Senha temporária: 8 caracteres fáceis de ditar (sem 0/O, 1/l), para o admin repassar ao usuário.
   const gerarSenha = () => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; const r = crypto.getRandomValues(new Uint32Array(8)); return [...r].map((n) => c[n % c.length]).join(''); };
@@ -1367,13 +1368,20 @@ async function telaAdmin(modo) {
         await ok(sb.from('profiles').update({ login_number: numero }).eq('id', uid));
         const email = f.get('email'), senha = f.get('senha');
         aviso('Usuário criado.'); await telaAdmin(modo);
-        await dialogo(`<h2 style="margin-top:0">Usuário criado ✅</h2><p>Passe estes dados para a pessoa:</p><p style="font-size:17px">Endereço: <b>${esc(location.origin + location.pathname)}</b><br>Nº do usuário: <b>${numero}</b> (ou o e-mail ${esc(email)})<br>Senha temporária: <b>${esc(senha)}</b></p><p class="dica">No primeiro acesso ela vai criar a senha pessoal.</p>`, 'Entendi');
+        const bv = await enviarBoasVindas(uid);
+        await dialogo(`<h2 style="margin-top:0">Usuário criado ✅</h2><p>Passe estes dados para a pessoa:</p><p style="font-size:17px">Endereço: <b>${esc(location.origin + location.pathname)}</b><br>Nº do usuário: <b>${numero}</b> (ou o e-mail ${esc(email)})<br>Senha temporária: <b>${esc(senha)}</b></p><p class="dica">No primeiro acesso ela vai criar a senha pessoal.</p>
+          <p>${bv.ok ? '📧 E-mail de boas-vindas enviado para ' + esc(email) + ' (a senha temporária não vai no e-mail).' : '⚠️ E-mail de boas-vindas não enviado: ' + esc(bv.motivo)}</p>`, 'Entendi');
       } catch (err) { falhou(err); }
     };
     $('#fu').nome.focus();
   };
+  $$('[data-apagar]').forEach((b) => (b.onclick = async () => {
+    const nome = b.closest('tr').children[1].textContent;
+    if (!confirm(`Apagar o usuário ${nome}?\n\nEle(a) não vai mais conseguir entrar. Orçamentos e vendas feitos por ele(a) continuam no sistema. Isto não pode ser desfeito.`)) return;
+    try { await ok(sb.rpc('admin_apagar_usuario', { p_user: b.dataset.apagar })); aviso('Usuário apagado.'); await telaAdmin(modo); } catch (err) { falhou(err); }
+  }));
   $$('[data-senha]').forEach((b) => (b.onclick = async () => {
-    const nova = gerarSenha(); const nome = b.closest('tr').children[0].textContent;
+    const nova = gerarSenha(); const nome = b.closest('tr').children[1].textContent;
     const r = await dialogo(`<h2 style="margin-top:0">Nova senha temporária</h2><p>Para <b>${esc(nome)}</b>. A senha atual deixa de valer e, no próximo acesso, ele(a) cria uma senha pessoal.</p><label>Senha temporária</label><input id="dSenha" value="${nova}">`, 'Definir senha', () => $('#dSenha').value);
     if (!r) return;
     try { await ok(sb.rpc('admin_senha_temporaria', { p_user: b.dataset.senha, p_senha: r })); aviso('Senha temporária definida.'); await telaAdmin(modo); await dialogo(`<h2 style="margin-top:0">Senha definida ✅</h2><p>Passe para <b>${esc(nome)}</b> a senha temporária: <b style="font-size:18px">${esc(r)}</b></p>`, 'Entendi'); } catch (err) { falhou(err); }
@@ -1391,6 +1399,13 @@ async function telaAdmin(modo) {
     const v = el.type === 'checkbox' ? el.checked : el.value;
     try { await ok(sb.from('profiles').update({ [el.dataset.c]: v }).eq('id', el.closest('tr').dataset.id)); aviso('Usuário atualizado.'); if (el.dataset.c === 'role') telaAdmin(modo); } catch (err) { falhou(err); }
   }));
+}
+// E-mail de boas-vindas (função "boas-vindas" no Supabase, envia pelo Gmail da HIGIVARO). Nunca trava o cadastro se falhar.
+async function enviarBoasVindas(userId) {
+  try {
+    const r = await fetch(HGV.url + '/functions/v1/boas-vindas', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: HGV.chave }, body: JSON.stringify({ user_id: userId }) });
+    return await r.json();
+  } catch (e) { return { ok: false, motivo: 'sem conexão com o serviço de e-mail' }; }
 }
 // Preço de venda sugerido: custo × (1 + frete% + imposto% + outros%) × (1 + margem%).
 const precoSugerido = (custo, f, t, o, m) => Math.round((Number(custo) || 0) * (1 + ((Number(f) || 0) + (Number(t) || 0) + (Number(o) || 0)) / 100) * (1 + (Number(m) || 0) / 100) * 100) / 100;
