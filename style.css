@@ -123,3 +123,14 @@ tr.clica:hover td{background:#f7fafd}
 .selo.classe-C{background:#fdf0d5;color:#9a6700}
 .selo.classe-S{background:#f1f1f1;color:#777}
 .selo.aviso-venc{background:#fdf0d5;color:#9a6700}
+/* Cadastro de produto em abas (estilo ERP) */
+.abas-ficha{display:flex;gap:4px;flex-wrap:wrap;border-bottom:2px solid var(--line);margin:0 0 12px}
+.abas-ficha button{border:1px solid var(--line);border-bottom:0;background:#f4f7fb;border-radius:8px 8px 0 0;padding:8px 14px;font:inherit;font-size:14px;cursor:pointer;color:var(--muted);margin-bottom:-2px}
+.abas-ficha button.ativa{background:#fff;color:var(--azul);font-weight:700;border-color:var(--line);border-bottom:2px solid #fff}
+.grade-preco{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.grade-preco .card{margin:0;padding:12px}
+.grade-preco h3{margin:0 0 6px;text-align:center;background:#eef3f9;border-radius:8px;padding:4px;font-size:15px}
+.pcs{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px}
+.pc label{margin:6px 0 2px;font-size:12px}
+.pc input{padding:6px 8px;text-align:right}
+.pc.destaque input{background:#fffbea;font-weight:700;color:var(--ink)}

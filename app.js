@@ -202,7 +202,7 @@ function telaLogin(modo = 'entrar') {
   app.innerHTML = `<div class="auth"><div class="logo"><img src="logo.png" alt="HIGIVARO"></div>
   <div class="card"><h1>${titulo}</h1><form id="f">
     ${modo === 'cadastro' ? '<label>Seu nome</label><input name="nome" required>' : ''}
-    ${modo === 'entrar' ? '<label>Nº do usuário ou e-mail</label><input name="email" required autocomplete="username" placeholder="Ex.: 8">' : '<label>E-mail</label><input name="email" type="email" required autocomplete="email">'}
+    ${modo === 'entrar' ? '<label>Nº do usuário ou e-mail</label><input name="email" required autocomplete="username">' : '<label>E-mail</label><input name="email" type="email" required autocomplete="email">'}
     ${modo !== 'esqueci' ? `<label>Senha</label><input name="senha" type="password" minlength="8" required autocomplete="${modo === 'cadastro' ? 'new-password' : 'current-password'}">` : ''}
     <div class="acoes"><button class="btn pri grande">${titulo}</button></div></form>
     <div class="acoes">
@@ -263,9 +263,10 @@ async function telaInicio() {
 // Busca por palavras-chave: cada palavra precisa aparecer (em qualquer ordem) no código, descrição, marca ou unidade,
 // sem diferenciar acento e maiúscula. Resultado do mais barato para o mais caro.
 const semAcento = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-async function buscarProdutos(t, limite = 30) {
+async function buscarProdutos(t, limite = 30, incluirInativos = false) {
   let q = sb.from('products').select('*').order('price', { ascending: true }).order('description').limit(limite);
   for (const p of semAcento(limpaBusca(t)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
+  if (!incluirInativos) q = q.neq('active', false);
   return ok(q);
 }
 // ---------- Curva ABC ----------
@@ -361,7 +362,7 @@ async function pdfTabela(titulo, subtitulo, quadros, cab, corpo, colunas, arquiv
 async function telaProdutos(modo) {
   if ((modo === 'novo' || modo === 'importar') && !podeEditarProdutos()) { location.hash = '#/produtos'; return; }
   const topo = secao('produtos', '#/produtos/' + modo);
-  if (modo === 'novo') { app.innerHTML = `${topo}<div id="form"></div>`; formProduto(null, () => (location.hash = '#/produtos/lista')); $('#cancela').onclick = () => (location.hash = '#/produtos'); return; }
+  if (modo === 'novo') { app.innerHTML = `${topo}<div id="form"></div>`; await formProduto(null, () => (location.hash = '#/produtos/lista')); $('#cancela').onclick = () => (location.hash = '#/produtos'); return; }
   if (modo === 'importar') {
     app.innerHTML = `${topo}<div class="card"><h2 style="margin-top:0">Importar planilha de produtos</h2>
       <p>Use um arquivo <b>CSV</b> (no Excel: <i>Salvar como › CSV</i>) com estas colunas na primeira linha:<br><code>codigo; descricao; marca; unidade; estoque; preco</code></p>
@@ -381,37 +382,134 @@ async function telaProdutos(modo) {
       let q = sb.from('products').select('*').lte('stock', 5).order('stock').order('description').limit(500);
       for (const p of semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
       ps = await ok(q);
-    } else ps = await buscarProdutos($('#busca').value, 200);
-    $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
+    } else ps = await buscarProdutos($('#busca').value, 200, true);
+    $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}${p.active === false ? ' <span class="selo devolvida">inativo</span>' : ''}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
     if (podeEditarProdutos()) $('#lista tr[data-id]').forEach((tr) => (tr.onclick = () => formProduto(ps.find((p) => p.id === tr.dataset.id), carregar)));
   };
   let t; $('#busca').oninput = () => { clearTimeout(t); t = setTimeout(carregar, 300); };
   carregar(); $('#busca').focus();
 }
-function formProduto(p, depois) {
+// ---------- Cadastro de produto completo (estilo ERP), em abas ----------
+// Formação de preço por mark-up: custo final = custo × (1 + acréscimos% − créditos%);
+// preço = custo final ÷ (1 − (deduções de venda% + margem%)); PMZ = preço sem lucro.
+const CAMPOS_PRECO = {
+  cred_icms: 'Créd. ICMS', cred_pis: 'Créd. PIS', cred_cofins: 'Créd. Cofins', cred_ipi: 'Créd. IPI',
+  ipi: 'IPI', st: 'Subst. Trib.', fcp: 'FCP', frete: 'Frete', outros_c: 'Outros C.',
+  custo_op: 'Custo operac.', trib_fed: 'Trib. federais', pis: 'PIS', cofins: 'Cofins', ir: 'I.R.', csll: 'CSLL', icms: 'ICMS', comissao: 'Comissão', outros_v: 'Outros V.', enc_fin: 'Enc. financ.',
+};
+const P_CREDITOS = ['cred_icms', 'cred_pis', 'cred_cofins', 'cred_ipi'], P_ACRESC = ['ipi', 'st', 'fcp', 'frete', 'outros_c'];
+const P_VENDA = ['custo_op', 'trib_fed', 'pis', 'cofins', 'ir', 'csll', 'icms', 'comissao', 'outros_v', 'enc_fin'];
+function pricingPadrao(p) {
+  const pad = padroesPreco(), base = Object.fromEntries(Object.keys(CAMPOS_PRECO).map((k) => [k, 0]));
+  return Object.assign(base, { frete: p?.freight_pct ?? pad.freight_pct, outros_c: p?.other_pct ?? pad.other_pct, trib_fed: p?.tax_pct ?? pad.tax_pct, margem: p?.margin_pct ?? pad.margin_pct }, p?.pricing || {});
+}
+function calcPreco(custo, f) {
+  const soma = (l) => l.reduce((s, k) => s + (Number(f[k]) || 0), 0);
+  const custoFinal = (Number(custo) || 0) * (1 + (soma(P_ACRESC) - soma(P_CREDITOS)) / 100);
+  const deducoes = soma(P_VENDA), fator = 1 - (deducoes + (Number(f.margem) || 0)) / 100;
+  return { custoFinal: r2(custoFinal), deducoes, fator, preco: fator > 0 ? r2(custoFinal / fator) : 0, pmz: deducoes < 100 ? r2(custoFinal / (1 - deducoes / 100)) : 0 };
+}
+const ORIGENS = [['0', '0 - Nacional'], ['1', '1 - Estrangeira (importação direta)'], ['2', '2 - Estrangeira (mercado interno)'], ['3', '3 - Nacional, conteúdo importado 40% a 70%'], ['4', '4 - Nacional, processos básicos'], ['5', '5 - Nacional, importado até 40%'], ['6', '6 - Estrangeira sem similar (importação direta)'], ['7', '7 - Estrangeira sem similar (mercado interno)'], ['8', '8 - Nacional, importado acima de 70%']];
+const CSOSNS = [['101', '101 - Tributada com crédito'], ['102', '102 - Tributada sem crédito (padrão MEI)'], ['103', '103 - Isenção por faixa de receita'], ['201', '201 - Com crédito e ST'], ['202', '202 - Sem crédito e com ST'], ['203', '203 - Isenção e ST'], ['300', '300 - Imune'], ['400', '400 - Não tributada'], ['500', '500 - ICMS cobrado antes por ST'], ['900', '900 - Outros']];
+async function formProduto(p, depois) {
   p = p || {};
-  const pad = padroesPreco(); const v = (k) => String(p[k] ?? pad[k] ?? '').replace('.', ',');
+  const f = pricingPadrao(p);
+  const codigos = [...(p.ean ? [p.ean] : []), ...(Array.isArray(p.barcodes) ? p.barcodes.filter((c) => c !== p.ean) : [])];
+  const embalagens = Array.isArray(p.packages) ? p.packages.map((x) => ({ ...x })) : [];
+  // Listas para sugerir fabricante, grupo, subgrupo e classe já usados.
+  let listas = { brand: [], group_name: [], subgroup: [], class_name: [] };
+  try { const rs = await ok(sb.from('products').select('brand,group_name,subgroup,class_name').limit(5000)); Object.keys(listas).forEach((k) => (listas[k] = [...new Set(rs.map((r) => r[k]).filter(Boolean))].sort())); } catch { /* segue sem sugestões */ }
+  const dl = (id, l) => `<datalist id="${id}">${l.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>`;
   const dec = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
-  $('#form').innerHTML = `<div class="card"><h2>${p.id ? 'Editar' : 'Novo'} produto <small style="color:var(--muted);font-weight:400">(todos os campos com * são obrigatórios)</small></h2><form id="fp"><div class="linha">
-    <div><label>Código *</label><input name="code" required value="${esc(p.code)}"></div>
-    <div style="flex:3 1 260px"><label>Descrição *</label><input name="description" required value="${esc(p.description)}"></div></div>
-    <div class="linha"><div><label>Marca *</label><input name="brand" required value="${esc(p.brand)}"></div><div><label>Unidade *</label><input name="unit" required value="${esc(p.unit || 'UND')}"></div>
-    <div><label>Código de barras (EAN)</label><input name="ean" inputmode="numeric" value="${esc(p.ean)}"></div><div><label>Estoque</label><input name="stock" inputmode="decimal" value="${p.stock ?? 0}"></div></div>
-    <h3 style="margin:14px 0 4px">Formação de preço</h3>
-    <div class="linha"><div><label>Custo (R$) *</label><input name="cost" required inputmode="decimal" value="${dec(p.cost)}"></div><div><label>Frete (%)</label><input name="freight_pct" inputmode="decimal" value="${v('freight_pct')}"></div><div><label>Impostos (%)</label><input name="tax_pct" inputmode="decimal" value="${v('tax_pct')}"></div><div><label>Outros (%)</label><input name="other_pct" inputmode="decimal" value="${v('other_pct')}"></div><div><label>Margem (%) *</label><input name="margin_pct" required inputmode="decimal" value="${v('margin_pct')}"></div></div>
-    <div class="linha"><div><label>Preço de venda (R$) *</label><input name="price" required inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:2 1 260px;align-self:flex-end"><p class="dica" id="sugPreco" style="margin:0"></p></div></div>
-    <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${p.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div></form></div>`;
+  const campo = (k) => `<div class="pc"><label>${CAMPOS_PRECO[k]} %</label><input data-pr="${k}" inputmode="decimal" value="${dec(f[k])}"></div>`;
+  $('#form').innerHTML = `<div class="card ficha"><h2 style="margin-top:0">${p.id ? 'Editar produto ' + esc(p.code) : 'Novo produto'} <small style="color:var(--muted);font-weight:400">(campos com * são obrigatórios)</small></h2>
+  <div class="abas-ficha"><button type="button" data-aba="dados" class="ativa">Dados do produto</button><button type="button" data-aba="preco">Formação de preço</button><button type="button" data-aba="trib">Tributos</button><button type="button" data-aba="emb">Códigos e embalagens</button></div>
+  <form id="fp" novalidate>
+  <div data-painel="dados">
+    <div class="linha"><div style="flex:0 1 150px"><label>Código interno *</label><input name="code" value="${esc(p.code)}"></div><div style="flex:0 1 170px"><label>Cód. fabricante</label><input name="mfr_code" value="${esc(p.mfr_code)}"></div><div><label>Fabricante / marca *</label><input name="brand" list="dlMarca" value="${esc(p.brand)}"></div></div>
+    <div class="linha"><div style="flex:3 1 300px"><label>Descrição *</label><input name="description" value="${esc(p.description)}"></div><div style="flex:2 1 220px"><label>Descrição PDV (curta)</label><input name="pdv_description" maxlength="40" value="${esc(p.pdv_description)}"></div></div>
+    <div class="linha"><div><label>Grupo</label><input name="group_name" list="dlGrupo" value="${esc(p.group_name)}"></div><div><label>Subgrupo</label><input name="subgroup" list="dlSub" value="${esc(p.subgroup)}"></div><div><label>Classe</label><input name="class_name" list="dlClasse" value="${esc(p.class_name)}"></div></div>
+    <div class="linha"><div style="flex:0 1 150px"><label>Un. comercial *</label><input name="unit" value="${esc(p.unit || 'UND')}"></div><div style="flex:0 1 150px"><label>Un. tributável</label><input name="unit_tax" value="${esc(p.unit_tax || '')}" placeholder="igual à comercial"></div><div style="flex:0 1 130px"><label>Múltiplo de venda</label><input name="unit_multiple" inputmode="decimal" value="${dec(p.unit_multiple)}"></div><div style="flex:0 1 130px"><label>Estoque</label><input name="stock" inputmode="decimal" value="${dec(p.stock ?? 0)}"></div></div>
+    <div class="linha"><div><label>Localizador</label><input name="location" value="${esc(p.location)}"></div><div><label>Prateleira</label><input name="shelf" value="${esc(p.shelf)}"></div><div><label>Último fornecedor</label><input value="${esc(p.last_supplier || '')}" disabled></div><div style="flex:0 1 150px"><label>Vlr. últ. compra</label><input value="${p.last_purchase_price != null ? brl(p.last_purchase_price) : ''}" disabled></div></div>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--ink)"><input type="checkbox" name="inativo" style="width:auto" ${p.active === false ? 'checked' : ''}> Inativar produto (não aparece mais nos orçamentos)</label>
+  </div>
+  <div data-painel="preco" hidden>
+    <div class="grade-preco">
+      <div class="card"><h3>Custo</h3><div class="pc"><label>Custo R$ *</label><input name="cost" inputmode="decimal" value="${dec(p.cost)}"></div>
+        <div class="pcs">${P_CREDITOS.map(campo).join('')}</div><div class="pcs">${P_ACRESC.map(campo).join('')}</div>
+        <div class="pc destaque"><label>Custo final R$</label><input id="custoFinal" disabled></div></div>
+      <div class="card"><h3>Preço de venda</h3><div class="pcs">${P_VENDA.map(campo).join('')}</div>
+        <div class="pcs"><div class="pc"><label>M. lucro % *</label><input data-pr="margem" inputmode="decimal" value="${dec(f.margem)}"></div><div class="pc"><label>Fator mark-up</label><input id="fator" disabled></div></div>
+        <div class="pcs"><div class="pc destaque"><label>Sugestão vlr. venda</label><input id="sugerido" disabled></div><div class="pc"><label>PMZ (sem lucro)</label><input id="pmz" disabled></div></div>
+        <button type="button" class="btn" id="usarSug">Usar a sugestão como preço</button></div>
+    </div>
+    <div class="linha"><div style="flex:0 1 200px"><label>Preço de venda R$ *</label><input name="price" inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:2 1 300px;align-self:flex-end"><p class="dica" id="lucros" style="margin:0"></p></div></div>
+  </div>
+  <div data-painel="trib" hidden>
+    <div class="linha"><div style="flex:0 1 160px"><label>NCM (8 números)</label><input name="ncm" inputmode="numeric" maxlength="10" value="${esc(p.ncm)}"></div><div style="flex:0 1 160px"><label>CEST</label><input name="cest" inputmode="numeric" maxlength="9" value="${esc(p.cest)}"></div><div style="flex:0 1 120px"><label>CFOP</label><input name="cfop" inputmode="numeric" maxlength="4" value="${esc(p.cfop || '5102')}"></div></div>
+    <div class="linha"><div><label>Origem da mercadoria</label><select name="origin">${ORIGENS.map(([v, t]) => `<option value="${v}" ${String(p.origin ?? '0') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div><label>CSOSN (Simples Nacional / MEI)</label><select name="cst">${CSOSNS.map(([v, t]) => `<option value="${v}" ${String(p.cst ?? '102') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div>
+    <p class="dica">Estes dados serão usados na emissão da NF-e. Na dúvida sobre NCM e CEST, copie da nota de compra do fornecedor ou confirme com o contador.</p>
+  </div>
+  <div data-painel="emb" hidden>
+    <h3 style="margin:4px 0">Códigos de barras (GTIN/EAN)</h3><div id="codigos"></div><div class="linha" style="margin-top:6px"><input id="novoCodigo" inputmode="numeric" placeholder="Digite ou leia o código de barras" style="flex:0 1 260px"><button type="button" class="btn" id="addCodigo" style="flex:0 0 auto">＋ Adicionar</button></div>
+    <h3 style="margin:16px 0 4px">Embalagens de venda</h3><p style="color:var(--muted);font-size:13px;margin:0 0 6px">Ex.: CX com 12 unidades. O preço sugerido usa o custo × fator e a margem da embalagem.</p>
+    <div class="tabela"><table><thead><tr><th>Código de barras</th><th>Un.</th><th class="num">Fator</th><th class="num">M.L. %</th><th class="num">Preço R$</th><th></th></tr></thead><tbody id="embs"></tbody></table></div>
+    <button type="button" class="btn" id="addEmb" style="margin-top:6px">＋ Embalagem</button>
+  </div>
+  <div class="acoes"><button class="btn pri">Salvar</button><button type="button" class="btn" id="cancela">Cancelar</button>${p.id && ehAdmin() ? '<button type="button" class="btn perigo" id="apaga">Excluir</button>' : ''}</div>
+  </form>${dl('dlMarca', listas.brand)}${dl('dlGrupo', listas.group_name)}${dl('dlSub', listas.subgroup)}${dl('dlClasse', listas.class_name)}</div>`;
   $('#form').scrollIntoView({ behavior: 'smooth' });
-  const calc = () => { const f = Object.fromEntries(new FormData($('#fp'))); const s = precoSugerido(num(f.cost), num(f.freight_pct), num(f.tax_pct), num(f.other_pct), num(f.margin_pct)); $('#sugPreco').innerHTML = num(f.cost) ? `Preço sugerido: <b>${brl(s)}</b> <button type="button" class="btn" id="usarSug" style="padding:3px 10px;margin-left:6px">Usar</button>` : 'Informe o custo para calcular o preço sugerido.'; if ($('#usarSug')) $('#usarSug').onclick = () => { $('#fp').price.value = String(s).replace('.', ','); S.sujo = true; }; };
-  ['cost', 'freight_pct', 'tax_pct', 'other_pct', 'margin_pct'].forEach((n) => ($('#fp')[n].oninput = calc)); calc();
+  const fp = $('#fp');
+  const abrir = (aba) => { $$('[data-aba]').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === aba)); $$('[data-painel]').forEach((d) => (d.hidden = d.dataset.painel !== aba)); };
+  $$('[data-aba]').forEach((b) => (b.onclick = () => abrir(b.dataset.aba)));
+  const lerPr = () => { $$('[data-pr]').forEach((i) => (f[i.dataset.pr] = num(i.value))); return f; };
+  const calc = () => {
+    const c = calcPreco(num(fp.cost.value), lerPr());
+    $('#custoFinal').value = brl(c.custoFinal); $('#fator').value = c.fator.toFixed(4).replace('.', ','); $('#sugerido').value = c.fator > 0 ? brl(c.preco) : 'margem + deduções ≥ 100%'; $('#pmz').value = brl(c.pmz);
+    const pv = num(fp.price.value);
+    if (pv) { const bruto = pv - c.custoFinal, liq = bruto - pv * c.deducoes / 100; $('#lucros').innerHTML = `Lucro bruto: <b>${brl(bruto)}</b> (${((bruto / pv) * 100).toFixed(1).replace('.', ',')}%) · Lucro líquido: <b>${brl(liq)}</b> (${((liq / pv) * 100).toFixed(1).replace('.', ',')}%)${pv < c.pmz ? ' · <b style="color:var(--red)">abaixo do PMZ (prejuízo)</b>' : ''}`; }
+    else $('#lucros').textContent = 'Informe o preço de venda (ou use a sugestão).';
+    desenharEmb();
+    return c;
+  };
+  $('#usarSug').onclick = () => { const c = calc(); if (c.preco) { fp.price.value = dec(c.preco); S.sujo = true; calc(); } };
+  [...$$('[data-pr]'), fp.cost, fp.price].forEach((i) => i.addEventListener('input', calc));
+  // Códigos de barras
+  const desenharCodigos = () => { $('#codigos').innerHTML = codigos.map((c, k) => `<span class="chip">${esc(c)}${k === 0 ? ' <small>(principal)</small>' : ''} <a href="#" data-xc="${k}" style="color:var(--red);text-decoration:none">✕</a></span>`).join(' ') || '<p class="vazio" style="padding:4px">Nenhum código de barras.</p>'; $$('[data-xc]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); codigos.splice(a.dataset.xc, 1); S.sujo = true; desenharCodigos(); })); };
+  $('#addCodigo').onclick = () => { const c = soDig($('#novoCodigo').value); if (c.length < 8) return aviso('Código de barras precisa ter de 8 a 14 números.', true); if (!codigos.includes(c)) codigos.push(c); $('#novoCodigo').value = ''; S.sujo = true; desenharCodigos(); };
+  $('#novoCodigo').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#addCodigo').click(); } };
+  // Embalagens de venda
+  function desenharEmb() {
+    const custo = num(fp.cost.value);
+    $('#embs').innerHTML = embalagens.map((x, k) => { const sug = calcPreco(custo * (num(x.factor) || 1), { ...f, margem: x.margin ?? f.margem }).preco; return `<tr data-e="${k}"><td><input data-ec="ean" value="${esc(x.ean || '')}" inputmode="numeric" style="width:150px"></td><td><input data-ec="unit" value="${esc(x.unit || '')}" style="width:70px"></td><td class="num"><input data-ec="factor" value="${dec(x.factor)}" inputmode="decimal" style="width:70px"></td><td class="num"><input data-ec="margin" value="${dec(x.margin ?? f.margem)}" inputmode="decimal" style="width:70px"></td><td class="num"><input data-ec="price" value="${dec(x.price)}" inputmode="decimal" style="width:100px" placeholder="${dec(sug)}"><br><small style="color:var(--muted)">sug. ${brl(sug)}</small></td><td><button type="button" class="btn perigo" data-xe="${k}" style="padding:3px 8px">✕</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="vazio">Nenhuma embalagem além da unidade.</td></tr>';
+    $$('#embs [data-ec]').forEach((i) => (i.onchange = () => { const x = embalagens[i.closest('[data-e]').dataset.e]; x[i.dataset.ec] = ['factor', 'margin', 'price'].includes(i.dataset.ec) ? num(i.value) : i.value.trim().toUpperCase(); calc(); }));
+    $$('#embs [data-xe]').forEach((b) => (b.onclick = () => { embalagens.splice(b.dataset.xe, 1); S.sujo = true; desenharEmb(); }));
+  }
+  $('#addEmb').onclick = () => { embalagens.push({ unit: 'CX', factor: 12, margin: f.margem, ean: '', price: null }); S.sujo = true; desenharEmb(); };
+  desenharCodigos(); calc();
   $('#cancela').onclick = () => ($('#form').innerHTML = '');
-  if (p.id && $('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir este produto?')) return; try { await ok(sb.from('products').delete().eq('id', p.id)); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
-  $('#fp').onsubmit = async (e) => {
-    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
-    if (!num(f.price)) return aviso('Informe o preço de venda.', true);
-    const reg = { code: f.code.trim(), description: f.description.trim().toUpperCase(), brand: f.brand.trim().toUpperCase(), unit: f.unit.trim().toUpperCase(), ean: soDig(f.ean) || null, stock: num(f.stock), price: num(f.price), cost: num(f.cost),
-      freight_pct: num(f.freight_pct), tax_pct: num(f.tax_pct), other_pct: num(f.other_pct), margin_pct: num(f.margin_pct), updated_at: new Date().toISOString() };
-    try { await ok(p.id ? sb.from('products').update(reg).eq('id', p.id) : sb.from('products').insert(reg)); aviso('Produto salvo.'); $('#form').innerHTML = ''; depois(); } catch (err) { falhou(err); }
+  if ($('#apaga')) $('#apaga').onclick = async () => { if (!confirm('Excluir este produto?')) return; try { await ok(sb.from('products').delete().eq('id', p.id)); aviso('Produto excluído.'); $('#form').innerHTML = ''; depois(); } catch (e) { falhou(e); } };
+  fp.onsubmit = async (e) => {
+    e.preventDefault(); const d = Object.fromEntries(new FormData(fp)); lerPr();
+    // Obrigatórios: mostra a aba onde falta e marca o campo em vermelho.
+    const obrig = [['code', 'dados', 'código'], ['brand', 'dados', 'fabricante'], ['description', 'dados', 'descrição'], ['unit', 'dados', 'unidade'], ['cost', 'preco', 'custo'], ['price', 'preco', 'preço de venda']];
+    $$('#fp .falta').forEach((i) => i.classList.remove('falta'));
+    const faltam = obrig.filter(([n]) => !String(d[n] ?? '').trim() || (['cost', 'price'].includes(n) && !num(d[n])));
+    if (faltam.length) { faltam.forEach(([n]) => fp[n].classList.add('falta')); abrir(faltam[0][1]); return aviso('Preencha: ' + faltam.map((x) => x[2]).join(', '), true); }
+    const ncm = soDig(d.ncm); if (ncm && ncm.length !== 8) { abrir('trib'); fp.ncm.classList.add('falta'); return aviso('O NCM precisa ter 8 números.', true); }
+    const reg = {
+      code: d.code.trim(), mfr_code: d.mfr_code.trim() || null, description: d.description.trim().toUpperCase(), pdv_description: d.pdv_description.trim().toUpperCase() || null,
+      brand: d.brand.trim().toUpperCase(), group_name: d.group_name.trim().toUpperCase() || null, subgroup: d.subgroup.trim().toUpperCase() || null, class_name: d.class_name.trim().toUpperCase() || null,
+      unit: d.unit.trim().toUpperCase(), unit_tax: d.unit_tax.trim().toUpperCase() || null, unit_multiple: d.unit_multiple ? num(d.unit_multiple) : null, stock: num(d.stock),
+      location: d.location.trim() || null, shelf: d.shelf.trim() || null, active: !d.inativo,
+      cost: num(d.cost), price: num(d.price), pricing: { ...f }, freight_pct: f.frete, tax_pct: f.trib_fed, other_pct: f.outros_c, margin_pct: f.margem,
+      ncm: ncm || null, cest: soDig(d.cest) || null, cfop: soDig(d.cfop) || null, origin: d.origin, cst: d.cst,
+      ean: codigos[0] || null, barcodes: codigos.length ? codigos : null, packages: embalagens.length ? embalagens.map((x) => ({ ean: soDig(x.ean) || null, unit: x.unit || 'CX', factor: num(x.factor) || 1, margin: x.margin ?? f.margem, price: x.price || calcPreco(num(d.cost) * (num(x.factor) || 1), { ...f, margem: x.margin ?? f.margem }).preco })) : null,
+      updated_at: new Date().toISOString(),
+    };
+    try { await ok(p.id ? sb.from('products').update(reg).eq('id', p.id) : sb.from('products').insert(reg)); aviso('Produto salvo.'); $('#form').innerHTML = ''; depois(); }
+    catch (err) { falhou(String(err.message || err).includes('products_code_key') ? 'já existe um produto com este código interno' : err); }
   };
 }
 // CSV com cabeçalho: codigo;descricao;marca;unidade;estoque;preco (aceita vírgula ou ponto e vírgula)
@@ -1164,7 +1262,7 @@ function aplicarPercentuais(it, trocouProduto = false) {
   }
   it.precoManual = false; it.sale_price = it.acao === 'ligar' && p.price ? Number(p.price) : sugerido(it); it.update_price = false;
 }
-const sugerido = (it) => precoSugerido((it.unit_cost || 0) / (it.factor || 1), it.freight_pct, it.tax_pct, it.other_pct, it.margin_pct);
+const sugerido = (it) => it.produto?.pricing ? calcPreco((it.unit_cost || 0) / (it.factor || 1), { ...it.produto.pricing, frete: it.freight_pct, trib_fed: it.tax_pct, outros_c: it.other_pct, margem: it.margin_pct }).preco : precoSugerido((it.unit_cost || 0) / (it.factor || 1), it.freight_pct, it.tax_pct, it.other_pct, it.margin_pct);
 const dec = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
 // Linha de lote/validade e formação de preço de cada item da nota.
 function linhaPreco(it) {
