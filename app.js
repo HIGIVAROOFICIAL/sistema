@@ -1844,7 +1844,7 @@ async function telaNFeEmitidas() {
   if (!pode('emitir_nfe') && !pode('vendas')) { app.innerHTML = '<p class="vazio">Sem acesso às NF-e.</p>'; return; }
   app.innerHTML = `${secao('notas', '#/notas/emitidas')}
   <div class="linha"><div style="flex:0 1 200px"><label>Mês</label><input id="mes" type="month" value="" title="Vazio = todos os meses"></div>
-    <div style="flex:0 1 200px"><label>Situação</label><select id="sit"><option value="">Todas</option><option>autorizada</option><option>cancelada</option><option>rejeitada</option></select></div>
+    <div style="flex:0 1 200px"><label>Situação</label><select id="sit"><option value="">Todas</option><option>autorizada</option><option>cancelada</option><option>rejeitada</option><option>rascunho</option></select></div>
     <div><label>Buscar</label><input id="busca" placeholder="Cliente, nº da nota ou chave"></div></div>
   <p style="color:var(--muted);margin:6px 0 0;font-size:13px">📧 A cada NF-e emitida ou cancelada o sistema manda um e-mail para o administrador. Clique numa nota para ver os detalhes, baixar o XML ou cancelar.</p>
   <div id="kpis" class="grade" style="margin-top:12px"></div>
@@ -1872,12 +1872,15 @@ async function detalheNFe(n, depois) {
     <table style="font-size:14px">${linha('Cliente', (n.cliente || '') + (n.cliente_doc ? ' · ' + n.cliente_doc : ''))}${linha('Valor', brl(n.valor))}${linha('Série', String(n.serie ?? ''))}${linha('Chave', n.chave)}${linha('Protocolo', n.protocolo)}${linha('SEFAZ', (n.cstat || '') + ' ' + (n.motivo || ''))}
     ${linha('Emitida por', n.emitida_por)}${linha('Emitida em', new Date(n.emitida_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' }))}${linha('Aparelho', n.dispositivo)}
     ${n.status === 'cancelada' ? linha('Cancelada por', n.cancelada_por) + linha('Cancelada em', new Date(n.cancelada_em).toLocaleString('pt-BR', { timeZone: 'America/Bahia' })) + linha('Motivo', n.motivo_cancelamento) + linha('Protocolo do cancelamento', n.protocolo_cancelamento) : ''}</table>
-    <div class="acoes">${n.status !== 'rejeitada' ? '<button type="button" class="btn azul" id="dDanfe">📄 DANFE (PDF)</button>' : ''}<button type="button" class="btn" id="dXml">⬇️ Baixar XML</button>${n.chave && n.status !== 'rejeitada' ? '<button type="button" class="btn" id="dConsultar">🔎 Consultar na SEFAZ</button>' : ''}${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
+    ${n.status === 'rascunho' ? '<p class="dica">📝 <b>Rascunho</b>: ainda não foi enviado à SEFAZ. Veja o espelho, conclua para enviar ou exclua.</p>' : ''}
+    <div class="acoes">${n.status === 'rascunho' && pode('emitir_nfe') ? '<button type="button" class="btn pri" id="dConcluir">✅ Concluir e enviar à SEFAZ</button>' : ''}${n.status !== 'rejeitada' ? `<button type="button" class="btn azul" id="dDanfe">${n.status === 'rascunho' ? '👁 Espelho (PDF)' : '📄 DANFE (PDF)'}</button>` : ''}${n.status === 'rascunho' && pode('emitir_nfe') ? '<button type="button" class="btn perigo" id="dExcluirR">🗑 Excluir rascunho</button>' : ''}<button type="button" class="btn" id="dXml">⬇️ Baixar XML</button>${n.chave && n.status !== 'rejeitada' ? '<button type="button" class="btn" id="dConsultar">🔎 Consultar na SEFAZ</button>' : ''}${n.sale_id ? `<a class="btn" href="#/venda/${n.sale_id}">Ver a venda</a>` : ''}${podeCancelar ? '<button type="button" class="btn perigo" id="dCancelar">Cancelar NF-e</button>' : ''}</div>
     <p id="dSefaz" class="dica" hidden></p>
     ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
     'Fechar', null, () => {
       $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('#dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
       if ($('#dDanfe')) $('#dDanfe').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml').eq('id', n.id).single()); await danfePDF(x.xml); } catch (e) { falhou(e); } };
+      if ($('#dConcluir')) $('#dConcluir').onclick = async () => { try { const x = await ok(sb.from('nfe').select('dados').eq('id', n.id).single()); if (!x.dados?.v) return aviso('Rascunho sem os dados da nota.', true); $('.fundo-dialogo:last-child').remove(); emitirNFe(x.dados.v, depois, x.dados.itens, { id: n.id, dados: x.dados }); } catch (e) { falhou(e); } };
+      if ($('#dExcluirR')) $('#dExcluirR').onclick = async () => { if (!confirm('Excluir este rascunho de NF-e? (Ele nunca foi enviado à SEFAZ.)')) return; try { await ok(sb.rpc('nfe_rascunho_excluir', { p_id: n.id })); $('.fundo-dialogo:last-child').remove(); aviso('Rascunho excluído.'); depois && depois(); } catch (e) { falhou(e); } };
       // Consulta a situação oficial da nota na SEFAZ-BA (pelo programa do PC) e mostra o link do portal nacional.
       if ($('#dConsultar')) $('#dConsultar').onclick = async (ev) => {
         const b = ev.target, p = $('#dSefaz'); b.disabled = true; p.hidden = false; p.textContent = 'Consultando a SEFAZ-BA…';
@@ -2056,16 +2059,16 @@ function montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb, obsNFe = '' }
 const TEXTOS_RODAPE_PADRAO = ['Mercadoria entregue conforme o pedido.', 'Pagamento via Pix.', 'Trocas somente com a apresentação desta nota, em até 7 dias.'];
 const textosRodape = (cfg) => (Array.isArray(cfg?.textos) && cfg.textos.length ? cfg.textos : TEXTOS_RODAPE_PADRAO);
 // v = venda (ou documento avulso); itensAvulsos = itens escolhidos na NF-e avulsa (se não vier, usa os itens da venda).
-async function emitirNFe(v, depois, itensAvulsos) {
+async function emitirNFe(v, depois, itensAvulsos, rascunho) {
   try {
     const emp = await ok(sb.from('company_settings').select('*').eq('id', 1).single()), cfg = emp.nfe_config || {};
     if (!cfg.ie || !cfg.logradouro || !cfg.cMun || !cfg.razao) return aviso('Preencha e salve os dados fiscais em Admin › NF-e antes de emitir.', true);
-    const amb = cfg.ambiente === '1' ? '1' : '2';
+    const amb = '1'; // só produção (nota com valor fiscal)
     if (v.id) {
       const ja = await ok(sb.from('nfe').select('numero').eq('sale_id', v.id).eq('status', 'autorizada').limit(1));
       if (ja.length) return aviso(`Esta venda já tem a NF-e nº ${ja[0].numero} autorizada.`, true);
+      if (!rascunho) { const r = await ok(sb.from('nfe').select('id').eq('sale_id', v.id).eq('status', 'rascunho').limit(1)); if (r.length && !confirm('Esta venda já tem um rascunho de NF-e salvo (veja em Notas fiscais › NF-e emitidas). Criar outro mesmo assim?')) return; }
     }
-    await assinadorNFe('/status', {});
     const itens = itensAvulsos || await ok(sb.from('sale_items').select('*').eq('sale_id', v.id).order('description'));
     if (!itens.length) return aviso('Nenhum item para a nota.', true);
     const ids = [...new Set(itens.map((i) => i.product_id).filter(Boolean))];
@@ -2077,32 +2080,50 @@ async function emitirNFe(v, depois, itensAvulsos) {
       ${semNcm.length ? `<p><b>Sem NCM (8 números)</b> — cadastre na aba Tributos do produto:</p><ul>${semNcm.map((i) => `<li>${esc(i.code || '')} · ${esc(i.description)}</li>`).join('')}</ul>` : ''}
       ${csosnRuim.length ? `<p><b>CSOSN não usado pelo MEI</b> — use 102 (ou 500 se o ICMS já veio pago por substituição):</p><ul>${csosnRuim.map((i) => `<li>${esc(i.description)}</li>`).join('')}</ul>` : ''}
       <p class="dica">O NCM vem na nota de compra do fornecedor (ou confirme com o contador).</p>`, 'Entendi');
-    const dest = await dadosDestinatario(v); if (!dest) return;
-    const numero = await proximoNumeroNFe(cfg);
-    const previa = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb });
-    const textos = textosRodape(cfg);
-    const obsNFe = await dialogo(`<h2 style="margin-top:0">Emitir NF-e nº ${numero}${amb === '2' ? ' <span class="selo devolvida">TESTE</span>' : ''}</h2>
+    const dest = rascunho?.dados?.dest || await dadosDestinatario(v); if (!dest) return;
+    const numProv = await proximoNumeroNFe(cfg), textos = textosRodape(cfg);
+    let rascId = rascunho?.id || null, mudou = false;
+    const salvarRascunho = async (obs) => {
+      const m = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero: numProv, amb, obsNFe: obs });
+      rascId = await ok(sb.rpc('nfe_rascunho_salvar', { p_id: rascId, p: { ambiente: amb, serie: Number(cfg.serie) || 1, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, sale_id: v.id || '', xml: m.xml, dispositivo: dispositivo(), dados: { v, itens, dest, obs } } }));
+      mudou = true; return m;
+    };
+    const previa = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero: numProv, amb });
+    const obsNFe = await dialogo(`<h2 style="margin-top:0">NF-e ${rascunho ? '(rascunho)' : ''} · nº ${numProv} <small style="color:var(--muted);font-weight:400">(número confirmado ao concluir)</small></h2>
       <p><b>${esc(dest.nome)}</b> · ${esc(formatarDoc(dest.doc))}<br>${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · <b>${brl(previa.vNF)}</b>${previa.vDesc ? ' (desconto ' + brl(previa.vDesc) + ')' : ''}</p>
       <label>Informações complementares (rodapé da NF-e)</label>
       <select id="dTxt"><option value="">＋ Inserir um texto pronto…</option>${textos.map((t, k) => `<option value="${k}">${esc(t.length > 90 ? t.slice(0, 90) + '…' : t)}</option>`).join('')}</select>
-      <textarea id="dObsNfe" rows="4" maxlength="1500" placeholder="Ex.: dados do pedido, condições de entrega, observações do cliente…" style="margin-top:6px">${esc(v.observations || '')}</textarea>
+      <textarea id="dObsNfe" rows="4" maxlength="1500" placeholder="Ex.: dados do pedido, condições de entrega, observações do cliente…" style="margin-top:6px">${esc(rascunho?.dados?.obs ?? v.observations ?? '')}</textarea>
       <small style="color:var(--muted)">O aviso obrigatório do MEI sai sempre na nota${v.number ? ', junto com o nº da venda' : ''}. Os textos prontos são editados em Admin › NF-e.</small>
-      ${amb === '2' ? '<p class="dica">Ambiente de TESTE: a nota não tem valor fiscal.</p>' : '<p class="dica">Ambiente de PRODUÇÃO: a nota tem valor fiscal.</p>'}`, 'Emitir agora',
+      <div class="acoes"><button type="button" class="btn azul" id="dPrever">👁 Prever (salvar rascunho e ver o espelho)</button></div>
+      <p class="dica"><b>Prever</b> salva a nota como rascunho e gera o espelho em PDF, <b>sem enviar à SEFAZ</b>.<br><b>Concluir</b> envia a nota à SEFAZ-BA: ela passa a ter <b>valor fiscal</b>.</p>`, '✅ Concluir e enviar à SEFAZ',
       () => $('#dObsNfe').value.trim().replace(/\s+/g, ' '),
-      () => { $('#dTxt').onchange = () => { const k = $('#dTxt').value; if (k === '') return; const ta = $('#dObsNfe'); ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + textos[k]; $('#dTxt').value = ''; ta.focus(); }; });
-    if (obsNFe === null) return;
+      () => {
+        $('.fundo-dialogo:last-child .dialogo').classList.add('largo');
+        $('#dTxt').onchange = () => { const k = $('#dTxt').value; if (k === '') return; const ta = $('#dObsNfe'); ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + textos[k]; $('#dTxt').value = ''; ta.focus(); };
+        $('#dPrever').onclick = async (ev) => {
+          const b = ev.target; b.disabled = true;
+          try { const m = await salvarRascunho($('#dObsNfe').value.trim().replace(/\s+/g, ' ')); await danfePDF(m.xml); aviso('Rascunho salvo e espelho gerado (não foi enviado à SEFAZ).'); }
+          catch (e) { falhou(e); }
+          b.disabled = false;
+        };
+      });
+    if (obsNFe === null) { if (mudou) depois && depois(); return; }
+    if (!confirm(`Concluir e enviar a NF-e para a SEFAZ-BA?\n\n${dest.nome} · ${brl(previa.vNF)}\n\nDepois de autorizada, a nota tem valor fiscal (cancelamento só em até 24 horas).`)) { if (mudou) depois && depois(); return; }
+    await assinadorNFe('/status', {});
+    const numero = await proximoNumeroNFe(cfg);
     const m = montarXmlNFe({ cfg, emp, v, itens, pm, dest, numero, amb, obsNFe });
     aviso('Enviando a NF-e para a SEFAZ-BA…');
     const r = await assinadorNFe('/nfe/enviar', { amb, xml: m.xml });
     const autorizada = ['100', '150'].includes(String(r.cStat));
-    const reg = { sale_id: v.id || null, ambiente: amb, serie: Number(cfg.serie) || 1, numero, chave: m.chave, status: autorizada ? 'autorizada' : 'rejeitada', cstat: String(r.cStat || r.loteStat || ''), motivo: r.xMotivo || r.loteMotivo || '', protocolo: r.protocolo || null, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, dispositivo: dispositivo(), xml: autorizada ? r.xmlAutorizado : (r.xmlAssinado || m.xml) };
+    const reg = { sale_id: v.id || null, rascunho_id: rascId || '', ambiente: amb, serie: Number(cfg.serie) || 1, numero, chave: m.chave, status: autorizada ? 'autorizada' : 'rejeitada', cstat: String(r.cStat || r.loteStat || ''), motivo: r.xMotivo || r.loteMotivo || '', protocolo: r.protocolo || null, valor: m.vNF, cliente: dest.nome, cliente_doc: dest.doc, dispositivo: dispositivo(), xml: autorizada ? r.xmlAutorizado : (r.xmlAssinado || m.xml) };
     try { await ok(sb.rpc('registrar_nfe', { p: reg })); } catch (e) { if (autorizada) await dialogo(`<h2 style="margin-top:0">⚠️ NF-e autorizada, mas não registrada</h2><p>A SEFAZ autorizou a nota nº ${numero}, mas o sistema não conseguiu gravar o registro (${esc(e.message)}). Baixe o XML agora e me avise.</p>`, 'Baixar XML', () => baixarArquivo(`NFe${m.chave}.xml`, r.xmlAutorizado)); }
     if (autorizada) {
       aviso('NF-e autorizada e registrada.');
       const acao = await dialogo(`<h2 style="margin-top:0">✅ NF-e nº ${numero} autorizada</h2><p>Protocolo ${esc(r.protocolo || '')}<br>${esc(dest.nome)} · <b>${brl(m.vNF)}</b></p><p style="color:var(--muted)">O administrador recebeu o e-mail de aviso.</p>`, '📄 DANFE (PDF)', () => 'danfe');
       if (acao === 'danfe') danfePDF(r.xmlAutorizado).catch(falhou);
     } else {
-      await dialogo(`<h2 style="margin-top:0">❌ A SEFAZ recusou a NF-e</h2><p><b>${esc(reg.cstat)} – ${esc(reg.motivo)}</b></p><p class="dica">Corrija o que a mensagem indica (produto, cliente ou dados fiscais) e emita de novo. A tentativa ficou registrada em Notas fiscais › NF-e emitidas.</p>`, 'Entendi');
+      await dialogo(`<h2 style="margin-top:0">❌ A SEFAZ recusou a NF-e</h2><p><b>${esc(reg.cstat)} – ${esc(reg.motivo)}</b></p><p class="dica">Corrija o que a mensagem indica (produto, cliente ou dados fiscais) e conclua de novo.${rascId ? ' O rascunho continua salvo em Notas fiscais › NF-e emitidas.' : ' A tentativa ficou registrada em Notas fiscais › NF-e emitidas.'}</p>`, 'Entendi');
     }
     depois && depois();
   } catch (e) { falhou(e); }
@@ -2186,7 +2207,7 @@ async function danfePDF(xml) {
   const um = (pai, n) => (pai || doc).getElementsByTagNameNS('*', n)[0];
   const t = (pai, n) => um(pai, n)?.textContent || '';
   const inf = um(null, 'infNFe'), ide = um(inf, 'ide'), emit = um(inf, 'emit'), dest = um(inf, 'dest'), tot = um(inf, 'ICMSTot'), prot = um(null, 'infProt');
-  const chave = (inf.getAttribute('Id') || '').replace('NFe', ''), homolog = t(ide, 'tpAmb') === '2';
+  const chave = (inf.getAttribute('Id') || '').replace('NFe', ''), homolog = t(ide, 'tpAmb') === '2', espelho = !prot;
   const { jsPDF } = window.jspdf; const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const M = 6, L = 198; let y = M;
   const brlX = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2218,7 +2239,7 @@ async function danfePDF(xml) {
   caixa(xC, y + 15, wC, 8, 'Chave de acesso', chave.replace(/(\d{4})/g, '$1 ').trim(), { b: true, s: 7.5 });
   pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.text(pdf.splitTextToSize('Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora', wC - 4), xC + wC / 2, y + 27, { align: 'center' });
   y += hE;
-  caixa(M, y, 116, 8, 'Natureza da operação', t(ide, 'natOp')); caixa(M + 116, y, L - 116, 8, 'Protocolo de autorização de uso', prot ? `${t(prot, 'nProt')} - ${dataHora(t(prot, 'dhRecbto'))}` : 'NÃO AUTORIZADA'); y += 8;
+  caixa(M, y, 116, 8, 'Natureza da operação', t(ide, 'natOp')); caixa(M + 116, y, L - 116, 8, 'Protocolo de autorização de uso', prot ? `${t(prot, 'nProt')} - ${dataHora(t(prot, 'dhRecbto'))}` : 'ESPELHO – NÃO ENVIADA À SEFAZ'); y += 8;
   caixa(M, y, 66, 8, 'Inscrição estadual', t(emit, 'IE')); caixa(M + 66, y, 66, 8, 'Insc. estadual do subst. trib.', ''); caixa(M + 132, y, L - 132, 8, 'CNPJ', fmtDoc(t(emit, 'CNPJ'))); y += 10;
   // Destinatário
   const ed = um(dest, 'enderDest'); titulo('DESTINATÁRIO / REMETENTE');
@@ -2244,7 +2265,8 @@ async function danfePDF(xml) {
   y = pdf.lastAutoTable.finalY + 2; if (y > 255) { pdf.addPage(); y = M; }
   titulo('DADOS ADICIONAIS'); caixa(M, y, 140, 30, 'Informações complementares', t(inf, 'infCpl'), { s: 7, dy: 6, max: 8 }); caixa(M + 140, y, L - 140, 30, 'Reservado ao fisco', '');
   if (homolog) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(40); pdf.setTextColor(210, 40, 40); pdf.text('SEM VALOR FISCAL', 105, 170, { align: 'center', angle: 25 }); pdf.setFontSize(12); pdf.text('NF-e emitida em ambiente de homologação (teste)', 105, 182, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
-  pdf.save(`DANFE-${t(ide, 'nNF')}-${chave.slice(-6)}.pdf`);
+  if (espelho) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(54); pdf.setTextColor(210, 40, 40); pdf.text('ESPELHO', 105, 165, { align: 'center', angle: 25 }); pdf.setFontSize(12); pdf.text('Não enviada à SEFAZ · sem valor fiscal · nº e chave provisórios', 105, 178, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
+  pdf.save(`${espelho ? 'ESPELHO-NFe' : 'DANFE'}-${t(ide, 'nNF')}-${chave.slice(-6)}.pdf`);
 }
 // E-mail de boas-vindas (função "boas-vindas" no Supabase, envia pelo Gmail da HIGIVARO). Nunca trava o cadastro se falhar.
 async function enviarBoasVindas(userId) {
@@ -2275,11 +2297,11 @@ function formNFeAdmin(e) {
   <div class="card"><h2 style="margin-top:0">3. Dados fiscais da HIGIVARO (saem na NF-e)</h2>
     <div class="acoes" style="margin-top:0"><button class="btn azul" id="bCad">🔎 Buscar meus dados na SEFAZ-BA</button></div><p id="rCad" class="dica" hidden></p>
     <form id="ffis"><div class="linha" style="flex-wrap:wrap">${CAMPOS_FISCAIS.map(([k, r, w]) => `<div style="flex:${w} 1 ${w * 110}px"><label>${r}</label><input name="${k}" value="${v(k, k === 'municipio' ? 'BARREIRAS' : k === 'cMun' ? '2903201' : '')}"></div>`).join('')}</div>
-    <div class="linha"><div><label>Ambiente</label><select name="ambiente"><option value="2" ${c.ambiente !== '1' ? 'selected' : ''}>TESTE (homologação, sem valor fiscal)</option><option value="1" ${c.ambiente === '1' ? 'selected' : ''}>PRODUÇÃO (nota com valor fiscal)</option></select></div>
+    <div class="linha"><div><label>Ambiente</label><input value="PRODUÇÃO (notas com valor fiscal)" disabled></div>
       <div style="flex:0 1 110px"><label>Série</label><input name="serie" inputmode="numeric" value="${v('serie', '1')}"></div><div style="flex:0 1 160px"><label>Próximo nº da NF-e</label><input name="proximo" inputmode="numeric" value="${v('proximo', '1')}"></div></div>
     <label>Textos prontos para o rodapé da NF-e <small>(um por linha; aparecem no menu na hora de emitir)</small></label>
     <textarea name="textos" rows="5" placeholder="Ex.: Mercadoria entregue conforme o pedido.">${esc(textosRodape(c).join('\n'))}</textarea>
-    <p class="dica">Comece em <b>TESTE</b>. Só mude para PRODUÇÃO depois dos testes e da confirmação do contador de que a HIGIVARO está habilitada a emitir NF-e. O próximo nº deve continuar a numeração que a empresa já usa (se já emitiu notas em outro emissor, nesta mesma série).</p>
+    <p class="dica">As notas são emitidas em <b>PRODUÇÃO</b> (com valor fiscal). Na emissão, use <b>Prever</b> para salvar o rascunho e conferir o espelho antes de <b>Concluir</b>. O próximo nº deve continuar a numeração que a empresa já usa (se já emitiu notas em outro emissor, nesta mesma série).</p>
     <div class="acoes"><button class="btn pri">Salvar dados fiscais</button></div></form></div>`;
 }
 function ligarNFeAdmin(e) {
@@ -2302,7 +2324,7 @@ function ligarNFeAdmin(e) {
     d.ie = soDig(d.ie); d.cep = soDig(d.cep); d.cMun = soDig(d.cMun); d.fone = soDig(d.fone); d.serie = String(Number(soDig(d.serie)) || 1); d.proximo = String(Number(soDig(d.proximo)) || 1);
     const falta = [['razao', 'razão social'], ['ie', 'Inscrição Estadual'], ['logradouro', 'logradouro'], ['numero', 'número'], ['bairro', 'bairro'], ['cMun', 'código do município'], ['municipio', 'município'], ['cep', 'CEP']].filter(([k]) => !d[k]);
     if (falta.length) return aviso('Preencha: ' + falta.map((x) => x[1]).join(', '), true);
-    if (d.ambiente === '1' && !confirm('Mudar para PRODUÇÃO? As notas emitidas passam a ter valor fiscal.')) return;
+    d.ambiente = '1';
     try { await ok(sb.from('company_settings').update({ nfe_config: d }).eq('id', 1)); S.empresa = { ...S.empresa, nfe_config: d }; aviso('Dados fiscais salvos.'); } catch (er) { falhou(er); }
   };
 }
