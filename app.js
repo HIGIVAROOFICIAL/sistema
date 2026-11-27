@@ -420,7 +420,7 @@ async function telaProdutos(modo) {
   <div class="linha"><input id="busca" placeholder="Palavras-chave (ex.: agua 5l candeias) • do mais barato ao mais caro"></div>
   ${estoque ? '<p style="color:var(--muted);margin:8px 0 0">Produtos com estoque <b>até 5 unidades</b>, do menor estoque para o maior.</p>' : ''}
   ${podeEditarProdutos() ? '<p style="color:var(--muted);margin:8px 0 0;font-size:13px">✏️ Dê <b>dois cliques</b> num produto para editar.</p>' : ''}
-  <div id="form"></div><div class="tabela" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Descrição</th><th class="esconde-cel">Marca</th><th>Un.</th><th class="num">Estoque</th><th class="num">Preço</th></tr></thead><tbody id="lista"></tbody></table></div>`;
+  <div id="form"></div><div class="tabela" style="margin-top:12px"><table><thead><tr><th>Código</th><th>Descrição</th><th class="esconde-cel">Marca</th><th>Un.</th><th class="num">Estoque</th><th class="num">Varejo</th><th class="num">Atacado</th></tr></thead><tbody id="lista"></tbody></table></div>`;
   const carregar = async () => {
     let ps;
     if (estoque) {
@@ -428,7 +428,7 @@ async function telaProdutos(modo) {
       for (const p of semAcento(limpaBusca($('#busca').value)).split(/\s+/).filter(Boolean)) q = q.ilike('busca', `%${p}%`);
       ps = await ok(q);
     } else ps = await buscarProdutos($('#busca').value, 200, true);
-    $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}${p.active === false ? ' <span class="selo devolvida">inativo</span>' : ''}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum produto.</td></tr>';
+    $('#lista').innerHTML = ps.map((p) => `<tr class="${podeEditarProdutos() ? 'clica' : ''}" data-id="${p.id}"><td>${esc(p.code)}</td><td>${esc(p.description)}${p.active === false ? ' <span class="selo devolvida">inativo</span>' : ''}</td><td class="esconde-cel">${esc(p.brand)}</td><td>${esc(p.unit)}</td><td class="num" style="${p.stock <= 0 ? 'color:var(--red)' : ''}">${p.stock}</td><td class="num">${brl(p.price)}</td><td class="num">${Number(p.price_wholesale) > 0 ? brl(p.price_wholesale) : '<small style="color:var(--muted)">—</small>'}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum produto.</td></tr>';
     // Editar: dois cliques no produto (só administrador ou quem tem "Editar produtos e preços").
     if (podeEditarProdutos()) $$('#lista tr[data-id]').forEach((tr) => { tr.title = 'Dois cliques para editar'; tr.ondblclick = () => { window.getSelection()?.removeAllRanges(); formProduto(ps.find((p) => p.id === tr.dataset.id), carregar); }; });
   };
@@ -539,7 +539,7 @@ async function formProduto(p, depois) {
         <div class="pcs"><div class="pc destaque"><label>Sugestão vlr. venda</label><input id="sugerido" disabled></div><div class="pc"><label>PMZ (sem lucro)</label><input id="pmz" disabled></div></div>
         <button type="button" class="btn" id="usarSug">Usar a sugestão como preço</button><p class="dica" id="notaImp" style="margin:10px 0 0"></p></div>
     </div>
-    <div class="linha"><div style="flex:0 1 200px"><label>Preço de venda R$ *</label><input name="price" inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:2 1 300px;align-self:flex-end"><p class="dica" id="lucros" style="margin:0"></p></div></div>
+    <div class="linha"><div style="flex:0 1 200px"><label>Preço varejo R$ *</label><input name="price" inputmode="decimal" value="${dec(p.price)}"></div><div style="flex:0 1 200px"><label>Preço atacado R$</label><input name="price_wholesale" inputmode="decimal" value="${dec(p.price_wholesale)}" placeholder="igual ao varejo"></div><div style="flex:2 1 300px;align-self:flex-end"><p class="dica" id="lucros" style="margin:0"></p></div></div>
   </div>
   <div data-painel="trib" hidden>
     <div class="linha"><div style="flex:0 1 160px"><label>NCM (8 números)</label><input name="ncm" inputmode="numeric" maxlength="10" value="${esc(p.ncm)}"></div><div style="flex:0 1 160px"><label>CEST</label><input name="cest" inputmode="numeric" maxlength="9" value="${esc(p.cest)}"></div><div style="flex:0 1 120px"><label>CFOP</label><input name="cfop" inputmode="numeric" maxlength="4" value="${esc(p.cfop || '5102')}"></div></div>
@@ -633,7 +633,7 @@ async function formProduto(p, depois) {
       brand: d.brand.trim().toUpperCase(), group_name: d.group_name.trim().toUpperCase() || null, subgroup: d.subgroup.trim().toUpperCase() || null, class_name: d.class_name.trim().toUpperCase() || null,
       unit: d.unit.trim().toUpperCase(), unit_tax: d.unit_tax.trim().toUpperCase() || null, unit_multiple: d.unit_multiple ? num(d.unit_multiple) : null, stock: num(d.stock),
       location: d.location.trim() || null, shelf: d.shelf.trim() || null, active: !d.inativo,
-      cost: num(d.cost), price: num(d.price), pricing: { ...f }, freight_pct: f.frete, tax_pct: r2((Number(f.ipi) || 0) + (Number(f.st) || 0)), other_pct: f.outros_c, margin_pct: f.margem,
+      cost: num(d.cost), price: num(d.price), price_wholesale: String(d.price_wholesale || '').trim() ? num(d.price_wholesale) : null, pricing: { ...f }, freight_pct: f.frete, tax_pct: r2((Number(f.ipi) || 0) + (Number(f.st) || 0)), other_pct: f.outros_c, margin_pct: f.margem,
       ncm: ncm || null, cest: soDig(d.cest) || null, cfop: soDig(d.cfop) || null, origin: d.origin, cst: d.cst,
       ean: codigos[0] || null, barcodes: codigos.length ? codigos : null, packages: embalagens.length ? embalagens.map((x) => ({ ean: soDig(x.ean) || null, unit: x.unit || 'CX', factor: num(x.factor) || 1, margin: x.margin ?? f.margem, price: x.price || calcPreco(num(d.cost) * (num(x.factor) || 1), { ...f, margem: x.margin ?? f.margem }).preco })) : null,
       updated_at: new Date().toISOString(),
@@ -767,7 +767,9 @@ async function telaEditorOrcamento(id, codCliente) {
     <div id="obsBox" ${q.observations ? '' : 'hidden'}><label>📝 Informação adicional (sai no PDF)</label><textarea id="obs" placeholder="Ex.: entrega na sexta pela manhã, pagamento em 2x, falar com Maria…">${esc(q.observations)}</textarea></div></div>
   <p class="vazio card" id="avisoCli">👆 Preencha o cliente (código, busca ou nome) para adicionar os produtos.</p>
   <div id="etapaProd" hidden>
-  <div class="card"><h2 style="margin-top:0">Produtos</h2><input id="bp" placeholder="Palavras-chave do produto (ex.: detergente 5l) • do mais barato ao mais caro"><div id="sug"></div>
+  <div class="card"><h2 style="margin-top:0">Produtos</h2>
+    <div class="linha" style="margin-bottom:8px"><div style="flex:0 1 300px"><label>Tabela de preço *</label><select id="tabela"><option value="">— escolha atacado ou varejo —</option><option value="varejo" ${q.price_table === 'varejo' ? 'selected' : ''}>Varejo</option><option value="atacado" ${q.price_table === 'atacado' ? 'selected' : ''}>Atacado</option></select></div></div>
+    <input id="bp" placeholder="Palavras-chave do produto (ex.: detergente 5l) • do mais barato ao mais caro"><div id="sug"></div>
     <div class="tabela" style="margin-top:12px"><table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço un.</th><th class="num">Total</th><th></th></tr></thead><tbody id="carrinho"></tbody></table></div>
     <div class="linha" style="margin-top:12px"><div><label>Desconto (%)</label><input id="desc" inputmode="decimal" value="${String(q.discount_percent || 0).replace('.', ',')}"></div><div class="total" id="tot"></div></div></div>
   <div class="acoes"><button class="btn pri grande" id="salvar">Salvar orçamento</button></div></div>`;
@@ -787,17 +789,30 @@ async function telaEditorOrcamento(id, codCliente) {
     $('#tot').innerHTML = `<small style="font-weight:400;color:var(--muted)">${itens.length} itens · bruto ${brl(bruto)}${pct ? ' · desconto ' + pct + '%' : ''}</small><br>Total ${brl(bruto * (1 - pct / 100))}`;
   };
   $('#desc').oninput = desenhar;
+  // Tabela de preço (preços do catálogo): atacado usa o preço de atacado; se o produto não tiver, usa o de varejo.
+  const precoTab = (p) => ($('#tabela').value === 'atacado' && Number(p.price_wholesale) > 0 ? Number(p.price_wholesale) : Number(p.price));
+  let tabAnt = $('#tabela').value;
+  $('#tabela').onchange = async () => {
+    const t = $('#tabela').value; S.sujo = true;
+    if (itens.length && t && tabAnt && t !== tabAnt && confirm(`Atualizar os preços dos ${itens.length} itens para a tabela de ${t.toUpperCase()}?`)) {
+      const ids = itens.map((i) => i.product_id).filter(Boolean);
+      const ps = ids.length ? await ok(sb.from('products').select('id,price,price_wholesale').in('id', ids)) : [];
+      itens.forEach((i) => { const p = ps.find((x) => x.id === i.product_id); if (p) i.unit_price = precoTab(p); }); desenhar();
+    }
+    tabAnt = t; if (t) $('#bp').focus();
+  };
   let t;
   $('#bp').oninput = () => {
     clearTimeout(t);
     t = setTimeout(async () => {
       const termo = $('#bp').value; if (termo.trim().length < 2) return ($('#sug').innerHTML = '');
-      const ps = await buscarProdutos(termo, 25);
-      $('#sug').innerHTML = ps.length ? `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.description)}</b><br><small>${esc(p.code)} · ${esc(p.brand || '')} · estoque ${p.stock} · ${brl(p.price)}</small></div>`).join('')}</div>` : '<p class="vazio">Nada encontrado.</p>';
+      if (!$('#tabela').value) { $('#sug').innerHTML = '<p class="vazio" style="color:var(--red)">Escolha primeiro a tabela de preço: atacado ou varejo.</p>'; $('#tabela').focus(); return; }
+      const ps = await buscarProdutos(termo, 25), atac = $('#tabela').value === 'atacado';
+      $('#sug').innerHTML = ps.length ? `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.description)}</b><br><small>${esc(p.code)} · ${esc(p.brand || '')} · estoque ${p.stock} · <b>${brl(precoTab(p))}</b>${atac ? (Number(p.price_wholesale) > 0 ? ' atacado · varejo ' + brl(p.price) : ' <span style="color:#b07800">(sem preço de atacado: varejo)</span>') : ''}</small></div>`).join('')}</div>` : '<p class="vazio">Nada encontrado.</p>';
       $$('#sug [data-id]').forEach((d) => (d.onclick = () => {
         const p = ps.find((x) => x.id === d.dataset.id);
         const ja = itens.find((i) => i.product_id === p.id);
-        if (ja) ja.quantity += 1; else itens.push({ product_id: p.id, code: p.code, description: p.description, brand: p.brand, unit: p.unit, quantity: 1, unit_price: Number(p.price) });
+        if (ja) ja.quantity += 1; else itens.push({ product_id: p.id, code: p.code, description: p.description, brand: p.brand, unit: p.unit, quantity: 1, unit_price: precoTab(p) });
         $('#bp').value = ''; $('#sug').innerHTML = ''; desenhar(); $('#bp').focus();
       }));
     }, 250);
@@ -849,10 +864,11 @@ async function telaEditorOrcamento(id, codCliente) {
   if (codCliente) { const c = await ok(sb.from('clients').select('*').eq('code', Number(codCliente)).maybeSingle()); if (c) preencher(c); }
   $('#salvar').onclick = async () => {
     if (!$('#nome').value.trim()) return aviso('Informe o nome do cliente.', true);
+    if (!$('#tabela').value) return aviso('Escolha a tabela de preço: atacado ou varejo.', true);
     if (!itens.length) return aviso('Adicione pelo menos um produto.', true);
     const b = $('#salvar'); b.disabled = true;
     const pct = num($('#desc').value), bruto = itens.reduce((s, i) => s + i.quantity * i.unit_price, 0);
-    const reg = { client_name: $('#nome').value.trim().toUpperCase(), client_doc: $('#doc').value.trim(), client_phone: $('#fone').value.trim(), client_email: $('#email').value.trim(), observations: $('#obs').value.trim(), discount_percent: pct, total: r2(bruto * (1 - pct / 100)), items_count: itens.length, status: 'finalizado' };
+    const reg = { client_name: $('#nome').value.trim().toUpperCase(), client_doc: $('#doc').value.trim(), client_phone: $('#fone').value.trim(), client_email: $('#email').value.trim(), observations: $('#obs').value.trim(), discount_percent: pct, total: r2(bruto * (1 - pct / 100)), items_count: itens.length, status: 'finalizado', price_table: $('#tabela').value };
     try {
       // Garante o cadastro do cliente (cria com código novo ou atualiza os dados) antes de gravar o orçamento.
       const cli = await salvarCliente(clienteId, { name: reg.client_name, doc: reg.client_doc || null, phone: reg.client_phone || null, email: reg.client_email || null });
@@ -886,7 +902,7 @@ async function telaOrcamento(id) {
     <button class="btn" id="obsBtn" title="Informação adicional que sai no PDF">📝 Informação adicional</button>
     ${ehAdmin() && q.status !== 'vendido' ? '<button class="btn perigo" id="apagar">Excluir</button>' : ''}
   </div>
-  <div class="card">${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small></div>
+  <div class="card">${q.price_table ? `<span class="selo ${q.price_table === 'atacado' ? 'aberto' : 'recebido'}">${q.price_table}</span> ` : ""}${q.client_code ? `<span class="selo">cliente ${q.client_code}</span> ` : ""}<b>${esc(q.client_name)}</b> ${q.client_doc ? '· ' + esc(q.client_doc) : ''}<br>${esc(q.client_phone || '')} ${esc(q.client_email || '')}<br><small style="color:var(--muted)">${dataBR(q.date)} ${esc(q.time)} · por ${esc(q.employee_name || '')}</small></div>
   ${q.observations ? `<div class="card obs-doc"><b>📝 Informação adicional</b> <small>(sai no PDF)</small><p>${esc(q.observations)}</p></div>` : ''}
   ${tabelaItens(itens, q.discount_percent)}
   ${logs.length ? `<h2>Histórico de edições</h2><div class="card">${logs.map((l) => `${new Date(l.created_at).toLocaleString('pt-BR')} · ${esc(l.editor_name)} · ${brl(l.total)}`).join('<br>')}</div>` : ''}`;
@@ -2433,7 +2449,7 @@ async function pdfDocumento(titulo, doc, itens, empresa) {
   rotulo('Telefone', col[1], y + 18); txt(doc.client_phone || '—', col[1], y + 22.5, { s: 9 });
   rotulo('E-mail', col[2], y + 18); txt(pdf.splitTextToSize(String(doc.client_email || '—').toLowerCase(), 62)[0], col[2], y + 22.5, { s: 9 });
   const extra = ehVenda ? [['Vendedor', doc.employee_name || '—'], ['Orçamento de origem', doc.quote_number ? 'Nº ' + doc.quote_number : '—'], ['Situação', doc.status === 'devolvida' ? 'Devolvida' : 'Confirmada']]
-    : [['Vendedor', doc.employee_name || '—'], ['Validade da proposta', '7 dias'], ['Itens', String(itens.length)]];
+    : [['Vendedor', doc.employee_name || '—'], ['Validade da proposta', '7 dias'], doc.price_table ? ['Tabela de preço', doc.price_table === 'atacado' ? 'Atacado' : 'Varejo'] : ['Itens', String(itens.length)]];
   extra.forEach(([r, v], k) => {
     rotulo(r, col[k], y + 27.5);
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); const w = pdf.getTextWidth(r.toUpperCase());
