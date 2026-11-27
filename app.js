@@ -45,6 +45,9 @@ const ROTAS = [
   [/^#\/financeiro\/despesas$/, () => telaDespesas('lista')],
   [/^#\/financeiro\/despesas\/nova$/, () => telaDespesas('nova')],
   [/^#\/admin$/, () => telaSecao('admin')],
+  [/^#\/notas$/, () => telaSecao('notas')],
+  [/^#\/notas\/(xml|pdf|lista)$/, (m) => telaNotas(m)],
+  [/^#\/nota\/([\w-]+)$/, telaNotaEntrada],
   [/^#\/admin\/(empresa|usuarios)$/, (m) => telaAdmin(m)],
 ];
 async function rotear() {
@@ -80,6 +83,8 @@ const ICONES = {
   empresa: '<path d="M3 21h18M5 21V7l7-4 7 4v14"/><path d="M9 9h1M14 9h1M9 13h1M14 13h1M10 21v-4h4v4"/>',
   usuarios: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   despesas: '<path d="M4 3h16v18l-3-2-3 2-2-2-2 2-3-2-3 2z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  nota: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 13h2v4H8zM12 13h1M15 13h1M12 17h4"/>',
+  foto: '<path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/>',
   financeiro: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   admin: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sair: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
@@ -93,15 +98,16 @@ const SECOES = {
   produtos: ['Produtos', [['#/produtos/lista', 'produtos', 'Consultar produtos'], ['#/produtos/estoque', 'alerta', 'Estoque zerado ou baixo'], ['#/produtos/novo', 'novo', 'Cadastrar produto', 1], ['#/produtos/importar', 'importar', 'Importar planilha', 1]]],
   financeiro: ['Financeiro', [['#/financeiro/resumo', 'grafico', 'Resumo do mês'], ['#/financeiro/receber', 'receber', 'A receber (em aberto)'], ['#/financeiro/despesas', 'despesas', 'Despesas (a pagar)', 1], ['#/financeiro/despesas/nova', 'novo', 'Lançar despesa', 1]]],
   admin: ['Administração', [['#/admin/empresa', 'empresa', 'Dados da empresa', 1], ['#/admin/usuarios', 'usuarios', 'Usuários e acessos', 1]]],
+  notas: ['Notas fiscais', [['#/notas/xml', 'importar', 'Entrada por XML', 1], ['#/notas/pdf', 'foto', 'Entrada por PDF ou foto', 1], ['#/notas/lista', 'lista', 'Notas de entrada', 1]]],
 };
 const secao = (nome, atual) => { const [titulo, itens] = SECOES[nome]; return `<h1>${titulo}</h1><div class="atalhos">${itens.filter((i) => !i[3] || ehAdmin()).map(([href, ic, rot]) => `<a href="${href}" class="${href === atual ? 'ativo' : ''}">${icone(ic)}<span>${rot}</span></a>`).join('')}</div>`; };
-async function telaSecao(nome) { if (nome === 'admin' && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
+async function telaSecao(nome) { if ((nome === 'admin' || nome === 'notas') && !ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; } app.innerHTML = secao(nome, ''); }
 function montarMenu(h) {
   $('#topo').hidden = false;
   $('#quem').textContent = (S.perfil?.full_name || '') + (ehAdmin() ? ' · administrador' : '');
   const itens = [['#/', 'Início', 'inicio'], ['#/orcamentos', 'Orçamentos', 'orcamentos'], ['#/vendas', 'Vendas', 'vendas'], ['#/clientes', 'Clientes', 'clientes'], ['#/produtos', 'Produtos', 'produtos'], ['#/financeiro', 'Financeiro', 'financeiro']];
-  if (ehAdmin()) itens.push(['#/admin', 'Admin', 'admin']);
-  const ativo = (href) => h === href || (href !== '#/' && h.startsWith(href + '/')) || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
+  if (ehAdmin()) itens.push(['#/notas', 'Notas fiscais', 'nota'], ['#/admin', 'Admin', 'admin']);
+  const ativo = (href) => h === href || (href !== '#/' && h.startsWith(href + '/')) || (href === '#/orcamentos' && /^#\/orcamento\/(?!novo)/.test(h)) || (href === '#/vendas' && h.startsWith('#/venda/')) || (href === '#/notas' && h.startsWith('#/nota/')) || (href === '#/financeiro' && h.startsWith('#/financeiro')) || (href === '#/clientes' && h.startsWith('#/clientes'));
   $('#menu').innerHTML = itens.map(([href, t, ic]) => `<a href="${href}" class="${ativo(href) ? 'ativo' : ''}">${icone(ic)}<span>${t}</span></a>`).join('') + `<button id="sair" class="sair">${icone('sair')}<span>Sair</span></button>`;
   $('#sair').onclick = async () => { await sb.auth.signOut(); S.user = S.perfil = S.empresa = null; location.hash = '#/'; rotear(); };
 }
@@ -746,6 +752,215 @@ async function pdfDespesas(lista, filtro) {
   if (!lista.length) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.setTextColor(...CINZA); pdf.text('Nenhuma despesa neste filtro.', 105, y + 25, { align: 'center' }); }
   rodapePdf(pdf, c);
   pdf.save(`Despesas-${hoje()}.pdf`);
+}
+
+// ---------- notas fiscais de entrada (compras) — só administrador ----------
+// Carrega um script de CDN só quando for usado (pdf.js para PDF, ZXing para código de barras da foto).
+const scriptsCarregados = {};
+function carregarScript(src) {
+  return (scriptsCarregados[src] = scriptsCarregados[src] || new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('não carregou ' + src)); document.head.appendChild(s); }));
+}
+// A chave de acesso (44 dígitos) já traz: UF, AAMM, CNPJ do emitente, modelo, série e número.
+function dadosDaChave(ch) {
+  ch = soDig(ch); if (ch.length !== 44) return null;
+  return { access_key: ch, supplier_cnpj: formatarDoc(ch.slice(6, 20)), series: String(Number(ch.slice(22, 25))), number: String(Number(ch.slice(25, 34))) };
+}
+// XML da NF-e (procNFe ou NFe): fornecedor, número, data, itens, total e parcelas.
+function lerXmlNfe(texto) {
+  const doc = new DOMParser().parseFromString(texto, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('arquivo não é um XML válido');
+  const um = (pai, nome) => { const el = (pai || doc).getElementsByTagNameNS('*', nome)[0]; return el ? el.textContent.trim() : ''; };
+  const inf = doc.getElementsByTagNameNS('*', 'infNFe')[0];
+  if (!inf) throw new Error('este XML não é de NF-e (não achei a tag infNFe)');
+  const emit = doc.getElementsByTagNameNS('*', 'emit')[0];
+  const itens = [...doc.getElementsByTagNameNS('*', 'det')].map((det) => {
+    const prod = det.getElementsByTagNameNS('*', 'prod')[0];
+    const ean = um(prod, 'cEAN'); const q = Number(um(prod, 'qCom')) || 0; const vProd = Number(um(prod, 'vProd')) || 0;
+    return { supplier_code: um(prod, 'cProd'), ean: /^\d{8,14}$/.test(ean) ? ean : '', description: um(prod, 'xProd'), unit: um(prod, 'uCom'), quantity: q, unit_cost: q ? Math.round((vProd / q) * 10000) / 10000 : 0 };
+  });
+  const parcelas = [...doc.getElementsByTagNameNS('*', 'dup')].map((d) => ({ due_date: um(d, 'dVenc'), amount: Number(um(d, 'vDup')) || 0 })).filter((p) => p.amount);
+  const tot = doc.getElementsByTagNameNS('*', 'ICMSTot')[0];
+  return {
+    nota: { access_key: (inf.getAttribute('Id') || '').replace(/^NFe/, ''), number: um(null, 'nNF'), series: um(null, 'serie'), issue_date: (um(null, 'dhEmi') || um(null, 'dEmi')).slice(0, 10),
+      supplier_name: um(emit, 'xNome'), supplier_cnpj: formatarDoc(um(emit, 'CNPJ') || um(emit, 'CPF')), total: Number(um(tot, 'vNF')) || 0, source: 'xml', xml: texto },
+    itens, parcelas,
+  };
+}
+// PDF do DANFE: lê o texto e procura a chave, o fornecedor ("Recebemos de ..."), a data e o valor total. Os itens são conferidos na revisão.
+async function lerPdfDanfe(arq) {
+  await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await arq.arrayBuffer()) }).promise;
+  let texto = '';
+  for (let p = 1; p <= Math.min(pdf.numPages, 3); p++) texto += (await (await pdf.getPage(p)).getTextContent()).items.map((i) => i.str).join(' ') + '\n';
+  const t = texto.replace(/\s+/g, ' ');
+  const chave = (t.match(/(?:\d{4}\s?){10}\d{4}/g) || []).map(soDig).find((c) => c.length === 44) || '';
+  const base = dadosDaChave(chave) || {};
+  const nome = (t.match(/RECEBEMOS DE (.+?) OS PRODUTOS/i) || [])[1] || '';
+  const data = (t.match(/DATA DA EMISS[ÃA]O\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i) || t.match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || '';
+  const total = (t.match(/VALOR TOTAL DA NOTA\s*:?\s*R?\$?\s*([\d.]+,\d{2})/i) || [])[1] || '';
+  return { nota: { ...base, supplier_name: nome.trim(), issue_date: data ? data.split('/').reverse().join('-') : '', total: total ? num(total) : 0, source: 'pdf' }, itens: [], parcelas: [], texto: !!t.trim() };
+}
+// Foto da nota: lê o código de barras da chave (Code-128) com o leitor do navegador ou com a ZXing.
+async function lerFotoDanfe(arq) {
+  const url = URL.createObjectURL(arq);
+  try {
+    if ('BarcodeDetector' in window) {
+      try { const img = await createImageBitmap(arq); const r = await new BarcodeDetector({ formats: ['code_128'] }).detect(img); const c = r.map((x) => soDig(x.rawValue)).find((x) => x.length === 44); if (c) return c; } catch { /* tenta ZXing */ }
+    }
+    await carregarScript('https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js');
+    const r = await new ZXing.BrowserMultiFormatReader().decodeFromImageUrl(url);
+    const c = soDig(r.getText()); return c.length === 44 ? c : '';
+  } catch { return ''; } finally { URL.revokeObjectURL(url); }
+}
+async function telaNotas(modo) {
+  if (!ehAdmin()) { app.innerHTML = '<p class="vazio">Notas fiscais: acesso restrito ao administrador.</p>'; return; }
+  const topo = secao('notas', '#/notas/' + modo);
+  if (modo === 'lista') {
+    const ns = await ok(sb.from('purchase_invoices').select('id,number,series,issue_date,supplier_name,supplier_cnpj,total,items_count,source,created_at').order('created_at', { ascending: false }).limit(300));
+    app.innerHTML = `${topo}<div class="tabela"><table><thead><tr><th>Emissão</th><th>NF</th><th>Fornecedor</th><th class="esconde-cel">Itens</th><th class="esconde-cel">Origem</th><th class="num">Total</th></tr></thead><tbody>
+      ${ns.map((n) => `<tr class="clica" onclick="location.hash='#/nota/${n.id}'"><td>${dataBR(n.issue_date)}</td><td>${esc(n.number || '')}${n.series ? '/' + esc(n.series) : ''}</td><td>${esc(n.supplier_name || '')}<br><small style="color:var(--muted)">${esc(n.supplier_cnpj || '')}</small></td><td class="esconde-cel">${n.items_count}</td><td class="esconde-cel">${esc(n.source.toUpperCase())}</td><td class="num"><b>${brl(n.total)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhuma nota de entrada lançada ainda.</td></tr>'}</tbody></table></div>`;
+    return;
+  }
+  if (modo === 'xml') {
+    app.innerHTML = `${topo}<div class="card"><h2 style="margin-top:0">Entrada por XML</h2>
+      <p>Escolha o arquivo <b>XML</b> da nota de compra (o fornecedor manda por e-mail junto com a nota). O sistema lê fornecedor, itens, custos e parcelas, e você confere antes de dar entrada.</p>
+      <label class="btn azul grande" style="margin:0">📂 Escolher arquivo XML<input type="file" id="arq" accept=".xml,text/xml,application/xml" hidden></label></div><div id="rev"></div>`;
+    $('#arq').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      try { revisarNota(lerXmlNfe(await f.text())); } catch (err) { falhou(err); }
+    };
+    return;
+  }
+  // PDF ou foto
+  app.innerHTML = `${topo}<div class="card"><h2 style="margin-top:0">Entrada por PDF ou foto da nota</h2>
+    <p>O sistema lê a <b>chave de acesso</b> (no PDF pelo texto, na foto pelo código de barras) e, com ela, o fornecedor, o número e o total. <b>Os itens você confere ou lança</b> na tela seguinte.</p>
+    <div class="acoes"><label class="btn azul" style="margin:0">📄 Escolher PDF<input type="file" id="pdf" accept="application/pdf,.pdf" hidden></label>
+    <label class="btn azul" style="margin:0">📷 Foto da nota<input type="file" id="foto" accept="image/*" capture="environment" hidden></label></div>
+    <label>Ou digite a chave de acesso (44 números)</label><div class="linha"><input id="chave" inputmode="numeric" placeholder="0000 0000 0000 ..."><button class="btn" id="usarChave" style="flex:0 0 auto">Usar chave</button></div>
+    <p id="pst" style="color:var(--muted)"></p></div><div id="rev"></div>`;
+  const comChave = async (dados) => {
+    if (dados.nota.supplier_cnpj && !dados.nota.supplier_name) { const r = await buscarCnpj(soDig(dados.nota.supplier_cnpj)); if (r) dados.nota.supplier_name = r.nome; }
+    if (dados.nota.total && !dados.parcelas.length) dados.parcelas = [{ due_date: new Date(Date.now() + 30 * 864e5).toLocaleDateString('sv-SE'), amount: dados.nota.total }];
+    revisarNota(dados);
+  };
+  $('#pdf').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return; $('#pst').textContent = 'Lendo o PDF…';
+    try { const d = await lerPdfDanfe(f); $('#pst').textContent = d.nota.access_key ? 'Chave encontrada: ' + d.nota.access_key : (d.texto ? 'Não achei a chave no PDF. Digite a chave abaixo ou continue preenchendo à mão.' : 'Este PDF é uma imagem escaneada; use "Foto da nota" ou digite a chave.'); await comChave(d); } catch (err) { falhou(err); }
+  };
+  $('#foto').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return; $('#pst').textContent = 'Lendo o código de barras da foto…';
+    const ch = await lerFotoDanfe(f);
+    if (!ch) { $('#pst').textContent = 'Não consegui ler o código de barras. Tire a foto mais de perto, com boa luz e o código reto, ou digite a chave.'; return; }
+    $('#pst').textContent = 'Chave lida: ' + ch; await comChave({ nota: { ...dadosDaChave(ch), source: 'foto', total: 0 }, itens: [], parcelas: [] });
+  };
+  $('#usarChave').onclick = async () => {
+    const d = dadosDaChave($('#chave').value); if (!d) return aviso('A chave precisa ter 44 números.', true);
+    await comChave({ nota: { ...d, source: 'manual', total: 0 }, itens: [], parcelas: [] });
+  };
+}
+// Revisão antes de dar entrada: liga cada item a um produto, define o fator (ex.: CX com 12 = 12) e as parcelas do contas a pagar.
+async function revisarNota(dados) {
+  const n = dados.nota, itens = dados.itens, parcelas = dados.parcelas;
+  if (n.access_key) { const ja = await ok(sb.from('purchase_invoices').select('id,number').eq('access_key', n.access_key).maybeSingle()); if (ja) { aviso('Esta nota já foi lançada (NF ' + ja.number + ').', true); location.hash = '#/nota/' + ja.id; return; } }
+  // Liga automaticamente: 1) o mesmo item já veio deste fornecedor antes; 2) mesmo código de barras.
+  const cnpj = n.supplier_cnpj || '';
+  for (const it of itens) {
+    let pid = null, fator = 1;
+    if (it.supplier_code && cnpj) {
+      const ant = await ok(sb.from('purchase_items').select('product_id,factor,purchase_invoices!inner(supplier_cnpj)').eq('supplier_code', it.supplier_code).eq('purchase_invoices.supplier_cnpj', cnpj).not('product_id', 'is', null).limit(1));
+      if (ant[0]) { pid = ant[0].product_id; fator = Number(ant[0].factor) || 1; }
+    }
+    if (!pid && it.ean) { const p = await ok(sb.from('products').select('id').eq('ean', it.ean).limit(1)); if (p[0]) pid = p[0].id; }
+    it.factor = fator; it.acao = pid ? 'ligar' : 'escolher';
+    if (pid) it.produto = (await ok(sb.from('products').select('id,code,description,brand,unit,stock,price').eq('id', pid).single()));
+  }
+  const fonte = { xml: 'XML', pdf: 'PDF', foto: 'foto', manual: 'chave digitada' }[n.source] || n.source;
+  $('#rev').innerHTML = `<div class="card"><h2 style="margin-top:0">Conferir nota antes de dar entrada <small style="color:var(--muted);font-weight:400">(lida do ${fonte})</small></h2>
+    <div class="linha"><div style="flex:2 1 260px"><label>Fornecedor</label><input id="nForn" value="${esc(n.supplier_name)}"></div><div><label>CNPJ</label><input id="nCnpj" value="${esc(n.supplier_cnpj)}"></div></div>
+    <div class="linha"><div><label>Nº da NF</label><input id="nNum" value="${esc(n.number)}"></div><div><label>Série</label><input id="nSerie" value="${esc(n.series)}"></div><div><label>Emissão</label><input type="date" id="nData" value="${esc(n.issue_date)}"></div><div><label>Valor total (R$)</label><input id="nTotal" inputmode="decimal" value="${String(n.total || '').replace('.', ',')}"></div></div>
+    ${n.access_key ? `<p style="color:var(--muted);margin:8px 0 0">Chave: ${esc(n.access_key)} · <a href="https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g=" target="_blank" id="abrirSefaz">consultar na SEFAZ</a> (a chave é copiada; cole lá e resolva o "não sou robô")</p>` : ''}
+  </div>
+  <div class="card"><h2 style="margin-top:0">Itens</h2><p style="color:var(--muted);margin-top:0">Para cada item: ligue a um produto seu ou cadastre como novo. <b>Fator</b> = quantas unidades do seu estoque vêm em 1 unidade da nota (ex.: caixa com 12 → 12).</p>
+    <div id="itens"></div>
+    <div style="position:relative;margin-top:10px"><input id="addItem" placeholder="＋ Adicionar item (palavras-chave do produto)"><div id="sugAdd"></div></div></div>
+  <div class="card"><h2 style="margin-top:0">Contas a pagar</h2><label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="lancar" style="width:auto" ${parcelas.length ? 'checked' : ''}> Lançar as parcelas em Despesas (a pagar)</label>
+    <div id="parcs"></div><button class="btn" id="maisParc" style="margin-top:8px">＋ Parcela</button></div>
+  <div class="acoes"><button class="btn pri grande" id="confirmar">Dar entrada no estoque</button></div>`;
+  $('#rev').scrollIntoView({ behavior: 'smooth' });
+  if ($('#abrirSefaz')) $('#abrirSefaz').onclick = () => { navigator.clipboard?.writeText(n.access_key).catch(() => {}); };
+  const desenharItens = () => {
+    $('#itens').innerHTML = itens.length ? itens.map((it, k) => `<div class="item-nota" data-k="${k}">
+      <div><b>${esc(it.description)}</b><br><small style="color:var(--muted)">${it.supplier_code ? 'cód. fornecedor ' + esc(it.supplier_code) : ''}${it.ean ? ' · EAN ' + esc(it.ean) : ''}</small></div>
+      <div class="linha" style="margin-top:6px">
+        <div style="flex:0 1 90px"><label>Qtd</label><input data-c="quantity" inputmode="decimal" value="${String(it.quantity).replace('.', ',')}"></div>
+        <div style="flex:0 1 70px"><label>Un.</label><input data-c="unit" value="${esc(it.unit || '')}"></div>
+        <div style="flex:0 1 120px"><label>Custo un. (R$)</label><input data-c="unit_cost" inputmode="decimal" value="${String(it.unit_cost).replace('.', ',')}"></div>
+        <div style="flex:0 1 80px"><label>Fator</label><input data-c="factor" inputmode="decimal" value="${String(it.factor || 1).replace('.', ',')}"></div>
+        <div style="flex:2 1 240px"><label>Produto no seu estoque</label>
+          <select data-c="acao"><option value="ligar" ${it.acao === 'ligar' ? 'selected' : ''} ${it.produto ? '' : 'disabled'}>${it.produto ? esc(it.produto.code + ' · ' + it.produto.description) : '(nenhum ligado)'}</option><option value="escolher" ${it.acao === 'escolher' ? 'selected' : ''}>Procurar produto…</option><option value="novo" ${it.acao === 'novo' ? 'selected' : ''}>Cadastrar como produto novo</option><option value="ignorar" ${it.acao === 'ignorar' ? 'selected' : ''}>Não dar entrada neste item</option></select></div>
+      </div>
+      ${it.acao === 'escolher' ? `<div style="position:relative"><input class="buscaProd" placeholder="Palavras-chave do seu produto" value="${esc(it.busca || '')}"><div class="sugProd"></div></div>` : ''}
+      ${it.acao === 'novo' ? `<div class="linha"><div style="flex:2 1 240px"><label>Descrição do produto novo</label><input data-c="novoDesc" value="${esc(it.novoDesc ?? it.description)}"></div><div><label>Marca</label><input data-c="novoMarca" value="${esc(it.novoMarca || '')}"></div><div style="flex:0 1 140px"><label>Preço de venda (R$)</label><input data-c="novoPreco" inputmode="decimal" value="${String(it.novoPreco ?? (Math.round((it.unit_cost / (it.factor || 1)) * 1.4 * 100) / 100)).replace('.', ',')}"></div></div>` : ''}
+      <small style="color:var(--muted)">Entra no estoque: <b>${(num(String(it.quantity).replace('.', ',')) * (it.factor || 1)).toLocaleString('pt-BR')}</b> ${it.acao === 'ignorar' ? '(ignorado)' : ''} · custo por unidade de estoque: <b>${brl(it.unit_cost / (it.factor || 1))}</b></small>
+      <button class="btn perigo" data-x="${k}" style="float:right;padding:4px 10px">✕</button></div>`).join('') : '<p class="vazio">Nenhum item ainda. Use “Adicionar item” abaixo.</p>';
+    $$('#itens [data-c]').forEach((el) => (el.onchange = () => {
+      const it = itens[el.closest('[data-k]').dataset.k], c = el.dataset.c;
+      it[c] = ['quantity', 'unit_cost', 'factor', 'novoPreco'].includes(c) ? num(el.value) : el.value;
+      if (c === 'factor' && !it.factor) it.factor = 1;
+      desenharItens();
+    }));
+    $$('#itens [data-x]').forEach((b) => (b.onclick = () => { itens.splice(b.dataset.x, 1); desenharItens(); }));
+    $$('#itens .buscaProd').forEach((inp) => {
+      let t; inp.oninput = () => { clearTimeout(t); t = setTimeout(async () => {
+        const it = itens[inp.closest('[data-k]').dataset.k]; it.busca = inp.value; const box = inp.nextElementSibling;
+        if (inp.value.trim().length < 2) return (box.innerHTML = '');
+        const ps = await buscarProdutos(inp.value, 10);
+        box.innerHTML = `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.code)} · ${esc(p.description)}</b><br><small>${esc(p.brand || '')} · estoque ${p.stock} · ${brl(p.price)}</small></div>`).join('') || '<div>Nada encontrado</div>'}</div>`;
+        box.querySelectorAll('[data-id]').forEach((d) => (d.onclick = () => { it.produto = ps.find((p) => p.id === d.dataset.id); it.acao = 'ligar'; desenharItens(); }));
+      }, 250); };
+    });
+  };
+  let ta; $('#addItem').oninput = () => { clearTimeout(ta); ta = setTimeout(async () => {
+    const v = $('#addItem').value; if (v.trim().length < 2) return ($('#sugAdd').innerHTML = '');
+    const ps = await buscarProdutos(v, 10);
+    $('#sugAdd').innerHTML = `<div class="sugestoes">${ps.map((p) => `<div data-id="${p.id}"><b>${esc(p.code)} · ${esc(p.description)}</b><br><small>${esc(p.brand || '')} · estoque ${p.stock} · custo atual ${p.cost != null ? brl(p.cost) : '—'}</small></div>`).join('') || '<div>Nada encontrado</div>'}</div>`;
+    $$('#sugAdd [data-id]').forEach((d) => (d.onclick = () => { const p = ps.find((x) => x.id === d.dataset.id); itens.push({ description: p.description, unit: p.unit, quantity: 1, unit_cost: Number(p.cost || 0), factor: 1, acao: 'ligar', produto: p }); $('#addItem').value = ''; $('#sugAdd').innerHTML = ''; desenharItens(); }));
+  }, 250); };
+  const desenharParcs = () => {
+    $('#parcs').innerHTML = parcelas.map((p, k) => `<div class="linha" data-p="${k}"><div style="flex:0 1 180px"><label>Vencimento</label><input type="date" data-c="due_date" value="${esc(p.due_date)}"></div><div style="flex:0 1 160px"><label>Valor (R$)</label><input data-c="amount" inputmode="decimal" value="${String(p.amount).replace('.', ',')}"></div><button class="btn perigo" data-xp="${k}" style="flex:0 0 auto;align-self:flex-end">✕</button></div>`).join('') || '<p class="vazio" style="padding:6px">Sem parcelas.</p>';
+    $$('#parcs [data-c]').forEach((el) => (el.onchange = () => { const p = parcelas[el.closest('[data-p]').dataset.p]; p[el.dataset.c] = el.dataset.c === 'amount' ? num(el.value) : el.value; }));
+    $$('#parcs [data-xp]').forEach((b) => (b.onclick = () => { parcelas.splice(b.dataset.xp, 1); desenharParcs(); }));
+  };
+  $('#maisParc').onclick = () => { parcelas.push({ due_date: new Date(Date.now() + 30 * 864e5).toLocaleDateString('sv-SE'), amount: 0 }); $('#lancar').checked = true; desenharParcs(); };
+  desenharItens(); desenharParcs();
+  $('#confirmar').onclick = async () => {
+    const pend = itens.filter((it) => it.acao === 'escolher' || (it.acao === 'ligar' && !it.produto));
+    if (pend.length) return aviso(`Falta escolher o produto de ${pend.length} item(ns), ou marque "Não dar entrada".`, true);
+    if (!itens.some((it) => it.acao !== 'ignorar')) return aviso('Nenhum item para dar entrada.', true);
+    const payload = {
+      nota: { ...n, supplier_name: $('#nForn').value.trim().toUpperCase(), supplier_cnpj: $('#nCnpj').value.trim(), number: $('#nNum').value.trim(), series: $('#nSerie').value.trim(), issue_date: $('#nData').value, total: num($('#nTotal').value) },
+      itens: itens.filter((it) => it.acao !== 'ignorar').map((it) => ({ product_id: it.acao === 'ligar' ? it.produto.id : null, ...(it.acao === 'novo' ? { novo: { description: it.novoDesc ?? it.description, brand: it.novoMarca || '', unit: 'UND', price: it.novoPreco ?? Math.round((it.unit_cost / (it.factor || 1)) * 1.4 * 100) / 100 } } : {}),
+        supplier_code: it.supplier_code || '', ean: it.ean || '', description: it.description, unit: it.unit, quantity: it.quantity, unit_cost: it.unit_cost, factor: it.factor || 1 })),
+      parcelas: $('#lancar').checked ? parcelas.filter((p) => p.amount > 0 && p.due_date) : [],
+    };
+    const totEst = payload.itens.reduce((s, i) => s + i.quantity * i.factor, 0);
+    if (!confirm(`Dar entrada de ${payload.itens.length} item(ns) (${totEst.toLocaleString('pt-BR')} unidades no estoque)${payload.parcelas.length ? ' e lançar ' + payload.parcelas.length + ' parcela(s) em Despesas' : ''}?`)) return;
+    const b = $('#confirmar'); b.disabled = true;
+    try { const id = await ok(sb.rpc('registrar_entrada', { p: payload })); aviso('Entrada registrada. Estoque atualizado.'); location.hash = '#/nota/' + id; } catch (e) { falhou(e); b.disabled = false; }
+  };
+}
+async function telaNotaEntrada(id) {
+  if (!ehAdmin()) { app.innerHTML = '<p class="vazio">Acesso restrito ao administrador.</p>'; return; }
+  const [n, its] = await Promise.all([ok(sb.from('purchase_invoices').select('*').eq('id', id).single()), ok(sb.from('purchase_items').select('*, products(code,description)').eq('invoice_id', id))]);
+  app.innerHTML = `${secao('notas', '#/notas/lista')}
+  <div class="card"><h2 style="margin-top:0">NF ${esc(n.number || '')}${n.series ? ' / série ' + esc(n.series) : ''} · ${esc(n.supplier_name || '')}</h2>
+    ${esc(n.supplier_cnpj || '')} · emissão ${dataBR(n.issue_date)} · total <b>${brl(n.total)}</b> · lançada por ${esc(n.created_by || '')} em ${new Date(n.created_at).toLocaleDateString('pt-BR')} (origem: ${esc(n.source.toUpperCase())})
+    ${n.access_key ? `<br><small style="color:var(--muted)">Chave: ${esc(n.access_key)}</small>` : ''}
+    ${n.xml ? '<div class="acoes"><button class="btn" id="baixarXml">Baixar XML</button></div>' : ''}</div>
+  <div class="tabela"><table><thead><tr><th>Item da nota</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Fator</th><th>Produto no estoque</th><th class="num">Entrou</th></tr></thead><tbody>
+  ${its.map((i) => `<tr><td>${esc(i.description)}<br><small style="color:var(--muted)">${esc(i.supplier_code || '')} ${esc(i.unit || '')}</small></td><td class="num">${i.quantity}</td><td class="num">${brl(i.unit_cost)}</td><td class="num">${i.factor}</td><td>${i.products ? esc(i.products.code + ' · ' + i.products.description) : '<span style="color:var(--muted)">—</span>'}</td><td class="num"><b>${i.stock_added}</b></td></tr>`).join('')}</tbody></table></div>`;
+  if ($('#baixarXml')) $('#baixarXml').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([n.xml], { type: 'text/xml' })); a.download = `NF-${n.number || 'entrada'}.xml`; a.click(); };
 }
 
 // ---------- admin ----------
