@@ -25,10 +25,40 @@ function modelo(titulo: string, corpo: string) {
   </div></div>`;
 }
 
+// Aviso ao dono a cada NF-e emitida ou cancelada (chamado pelo gatilho do banco). Lê a nota no próprio banco
+// (não confia no que vem no pedido) e manda uma única vez por evento.
+const brl = (v: unknown) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const quando = (d: unknown) => d ? new Date(String(d)).toLocaleString("pt-BR", { timeZone: "America/Bahia" }) : "";
+async function avisoNfe(id: string, evento: string) {
+  const adm = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: n } = await adm.from("nfe").select("*").eq("id", id).maybeSingle();
+  if (!n) return resp({ ok: false, motivo: "nota não encontrada" }, 404);
+  const cancel = evento === "cancelada";
+  if (cancel ? (n.status !== "cancelada" || n.aviso_cancelada_em) : (n.status !== "autorizada" || n.aviso_emitida_em)) return resp({ ok: true, motivo: "nada a avisar" });
+  const user = Deno.env.get("GMAIL_USER"), pass = Deno.env.get("GMAIL_APP_PASSWORD");
+  if (!user || !pass) return resp({ ok: false, motivo: "e-mail não configurado" }, 503);
+  const { data: admins } = await adm.from("profiles").select("email").eq("role", "admin").eq("active", true);
+  const para = [...new Set([user, ...(admins || []).map((a) => a.email).filter(Boolean)])];
+  const teste = n.ambiente !== "1" ? " [TESTE - sem valor fiscal]" : "";
+  const linha = (r: string, v: unknown) => v ? `<tr><td style="padding:4px 12px 4px 0;color:#60728a">${r}</td><td style="padding:4px 0"><b>${esc(v)}</b></td></tr>` : "";
+  const tabela = `<table style="font-size:14px;border-collapse:collapse">${linha("NF-e", `nº ${n.numero ?? ""} · série ${n.serie ?? ""}`)}${linha("Cliente", `${n.cliente || ""}${n.cliente_doc ? " · " + n.cliente_doc : ""}`)}${linha("Valor", brl(n.valor))}
+    ${linha("Emitida por", n.emitida_por)}${linha("Emitida em", quando(n.emitida_em))}${linha("Protocolo", n.protocolo)}${linha("Chave", n.chave)}
+    ${cancel ? linha("Cancelada por", n.cancelada_por) + linha("Cancelada em", quando(n.cancelada_em)) + linha("Motivo", n.motivo_cancelamento) + linha("Protocolo do cancelamento", n.protocolo_cancelamento) : ""}</table>`;
+  const alerta = `<p style="margin-top:16px;padding:10px 12px;background:#fff8e6;border:1px solid #f3dca3;border-radius:8px;color:#7a5a00;font-size:13px">Não reconhece esta ${cancel ? "operação" : "nota"}? Entre no sistema (Notas fiscais › NF-e emitidas)${cancel ? "" : ", cancele a nota (em até 24 horas)"} e troque as senhas dos usuários.</p>`;
+  const smtp = new SMTPClient({ connection: { hostname: "smtp.gmail.com", port: 465, tls: true, auth: { username: user, password: pass } } });
+  await smtp.send({ from: `Sistema HIGIVARO <${user}>`, to: para, subject: `${cancel ? "❌ NF-e CANCELADA" : "🧾 NF-e emitida"} nº ${n.numero ?? ""} · ${n.cliente || ""} · ${brl(n.valor)}${teste}`,
+    html: modelo(`${cancel ? "NF-e cancelada" : "NF-e emitida"}${teste}`, `<p>${cancel ? "Uma NF-e da HIGIVARO foi <b>cancelada</b> no sistema." : "Uma NF-e da HIGIVARO foi <b>emitida</b> no sistema."}</p>${tabela}${alerta}<p style="margin-top:16px"><a href="${SITE}" style="color:#2f86de">Abrir o sistema</a></p>`), content: "auto" });
+  await smtp.close();
+  await adm.from("nfe").update(cancel ? { aviso_cancelada_em: new Date().toISOString() } : { aviso_emitida_em: new Date().toISOString() }).eq("id", n.id);
+  return resp({ ok: true });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
-    const { user_id } = await req.json();
+    const pedido = await req.json();
+    if (pedido.tipo === "nfe") return await avisoNfe(String(pedido.id || ""), String(pedido.evento || ""));
+    const { user_id } = pedido;
     if (!user_id) return resp({ ok: false, motivo: "faltou o usuário" }, 400);
     const adm = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: p, error: erroPerfil } = await adm.from("profiles").select("id,full_name,email,login_number,access_status,welcome_sent_at,created_at").eq("id", user_id).maybeSingle();
