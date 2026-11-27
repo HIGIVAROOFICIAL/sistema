@@ -31,8 +31,9 @@ Deno.serve(async (req) => {
     const { user_id } = await req.json();
     if (!user_id) return resp({ ok: false, motivo: "faltou o usuário" }, 400);
     const adm = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: p } = await adm.from("profiles").select("id,full_name,email,login_number,access_status,welcome_sent_at,created_at").eq("id", user_id).maybeSingle();
-    if (!p) return resp({ ok: false, motivo: "usuário não encontrado" }, 404);
+    const { data: p, error: erroPerfil } = await adm.from("profiles").select("id,full_name,email,login_number,access_status,welcome_sent_at,created_at").eq("id", user_id).maybeSingle();
+    if (erroPerfil) { console.error("perfil:", erroPerfil); return resp({ ok: false, motivo: "erro ao ler o usuário: " + erroPerfil.message }, 500); }
+    if (!p) return resp({ ok: false, motivo: "usuário não encontrado (" + user_id + ")" }, 404);
     if (p.welcome_sent_at) return resp({ ok: true, motivo: "já enviado antes" });
     if (Date.now() - new Date(p.created_at).getTime() > 2 * 3600e3) return resp({ ok: false, motivo: "cadastro antigo" }, 400);
     const user = Deno.env.get("GMAIL_USER"), pass = Deno.env.get("GMAIL_APP_PASSWORD");
