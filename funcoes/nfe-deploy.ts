@@ -158,7 +158,7 @@ async function soap(amb: string, servico: string, conteudo: string) {
   try {
     // deno-lint-ignore no-explicit-any
     r = await fetch(url(amb, servico), { method: "POST", headers: { "Content-Type": "application/soap+xml; charset=utf-8" }, body: env, client: c.cliente } as any);
-  } catch (e) { throw new Error("sem conexão com a SEFAZ-BA: " + String((e as Error).message || e).slice(0, 200)); }
+  } catch (e) { throw new Error("sem conexão com a SEFAZ-BA: " + String((e as Error).message || e).slice(0, 700)); }
   const txt = await r.text();
   if (!r.ok) throw new Error(`SEFAZ-BA respondeu ${r.status}: ${txt.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300)}`);
   return txt;
