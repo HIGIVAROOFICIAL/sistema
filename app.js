@@ -2236,10 +2236,12 @@ async function danfePDF(xml) {
   const xC = M + 116, wC = L - 116; caixa(xC, y, wC, hE, '', '');
   const barras = barrasCode128C(chave), mods = [...barras].reduce((s, c) => s + Number(c), 0), mw = (wC - 6) / mods; let xb = xC + 3; pdf.setFillColor(0);
   [...barras].forEach((c, i) => { const w = Number(c) * mw; if (i % 2 === 0) pdf.rect(xb, y + 2, w, 12, 'F'); xb += w; });
+  // Espelho (não enviada): aviso em vermelho sobre o código de barras, como nos emissores do mercado.
+  if (espelho) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(12.5); pdf.setTextColor(220, 20, 20); pdf.text('NF-E NÃO ENVIADA PARA SEFAZ', xC + wC / 2, y + 9.8, { align: 'center' }); pdf.setTextColor(0); }
   caixa(xC, y + 15, wC, 8, 'Chave de acesso', chave.replace(/(\d{4})/g, '$1 ').trim(), { b: true, s: 7.5 });
   pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.text(pdf.splitTextToSize('Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora', wC - 4), xC + wC / 2, y + 27, { align: 'center' });
   y += hE;
-  caixa(M, y, 116, 8, 'Natureza da operação', t(ide, 'natOp')); caixa(M + 116, y, L - 116, 8, 'Protocolo de autorização de uso', prot ? `${t(prot, 'nProt')} - ${dataHora(t(prot, 'dhRecbto'))}` : 'ESPELHO – NÃO ENVIADA À SEFAZ'); y += 8;
+  caixa(M, y, 116, 8, 'Natureza da operação', t(ide, 'natOp')); caixa(M + 116, y, L - 116, 8, 'Protocolo de autorização de uso', prot ? `${t(prot, 'nProt')} - ${dataHora(t(prot, 'dhRecbto'))}` : ''); y += 8;
   caixa(M, y, 66, 8, 'Inscrição estadual', t(emit, 'IE')); caixa(M + 66, y, 66, 8, 'Insc. estadual do subst. trib.', ''); caixa(M + 132, y, L - 132, 8, 'CNPJ', fmtDoc(t(emit, 'CNPJ'))); y += 10;
   // Destinatário
   const ed = um(dest, 'enderDest'); titulo('DESTINATÁRIO / REMETENTE');
@@ -2263,9 +2265,8 @@ async function danfePDF(xml) {
     styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 0.8, lineColor: 0, lineWidth: 0.1, textColor: 0 }, headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 5.8 },
     columnStyles: { 0: { cellWidth: 15 }, 2: { cellWidth: 14 }, 3: { cellWidth: 10 }, 4: { cellWidth: 9 }, 5: { cellWidth: 8 }, 6: { cellWidth: 14, halign: 'right' }, 7: { cellWidth: 15, halign: 'right' }, 8: { cellWidth: 16, halign: 'right' }, 9: { cellWidth: 11, halign: 'right' }, 10: { cellWidth: 11, halign: 'right' }, 11: { cellWidth: 9, halign: 'right' } } });
   y = pdf.lastAutoTable.finalY + 2; if (y > 255) { pdf.addPage(); y = M; }
-  titulo('DADOS ADICIONAIS'); caixa(M, y, 140, 30, 'Informações complementares', t(inf, 'infCpl'), { s: 7, dy: 6, max: 8 }); caixa(M + 140, y, L - 140, 30, 'Reservado ao fisco', '');
+  titulo('DADOS ADICIONAIS'); caixa(M, y, 140, 30, 'Informações complementares', t(inf, 'infCpl') + (espelho ? '\nNF-e NÃO PROTOCOLADA NA SEFAZ - SEM VALOR FISCAL' : ''), { s: 7, dy: 6, max: 8 }); caixa(M + 140, y, L - 140, 30, 'Reservado ao fisco', '');
   if (homolog) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(40); pdf.setTextColor(210, 40, 40); pdf.text('SEM VALOR FISCAL', 105, 170, { align: 'center', angle: 25 }); pdf.setFontSize(12); pdf.text('NF-e emitida em ambiente de homologação (teste)', 105, 182, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
-  if (espelho) { pdf.setFont('helvetica', 'bold'); pdf.setFontSize(54); pdf.setTextColor(210, 40, 40); pdf.text('ESPELHO', 105, 165, { align: 'center', angle: 25 }); pdf.setFontSize(12); pdf.text('Não enviada à SEFAZ · sem valor fiscal · nº e chave provisórios', 105, 178, { align: 'center', angle: 25 }); pdf.setTextColor(0); }
   pdf.save(`${espelho ? 'ESPELHO-NFe' : 'DANFE'}-${t(ide, 'nNF')}-${chave.slice(-6)}.pdf`);
 }
 // E-mail de boas-vindas (função "boas-vindas" no Supabase, envia pelo Gmail da HIGIVARO). Nunca trava o cadastro se falhar.
