@@ -949,11 +949,22 @@ function dialogo(html, rotuloOk, ler, aoAbrir) {
     fundo.innerHTML = `<div class="card dialogo">${html}<div class="acoes"><button class="btn pri" id="dOk">${rotuloOk}</button><button class="btn" id="dCancela">Cancelar</button></div></div>`;
     document.body.appendChild(fundo); if (aoAbrir) aoAbrir();
     const fechar = (v) => { fundo.remove(); fim(v); };
-    $('#dCancela').onclick = () => fechar(null);
+    fundo._fechar = () => fechar(null); // usado pela tecla Esc
+    // Os botões são buscados só dentro desta janela (o aoAbrir pode ter removido o "Cancelar" e pode haver outra janela aberta por baixo).
+    const bCancela = $('#dCancela', fundo); if (bCancela) bCancela.onclick = () => fechar(null);
     fundo.onclick = (e) => { if (e.target === fundo) fechar(null); };
-    $('#dOk').onclick = () => { const v = ler ? ler() : true; if (v !== undefined) fechar(v); }; // undefined = algo faltando, a janela fica aberta
+    $('#dOk', fundo).onclick = () => { const v = ler ? ler() : true; if (v !== undefined) fechar(v); }; // undefined = algo faltando, a janela fica aberta
   });
 }
+// Esc fecha a janela que está por cima (diálogos, avisos do dia, "alterações não salvas").
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const jan = [...document.querySelectorAll('.fundo-dialogo, .fundo-avisos')].pop(); if (!jan) return;
+  e.preventDefault(); e.stopPropagation();
+  if (jan._fechar) return jan._fechar();
+  const b = jan.querySelector('[data-r="continuar"], #fecharAvisos, #dCancela'); if (b) return b.click();
+  jan.remove();
+});
 const diasAtraso = (venc) => Math.floor((new Date(hoje()) - new Date(String(venc).slice(0, 10))) / 864e5);
 // Texto claro do prazo: "Vencida há 3 dias", "Vence hoje" ou "Faltam 34 dias".
 const textoPrazo = (venc) => { const d = diasAtraso(venc); return d > 0 ? `Vencida há ${d} ${d === 1 ? 'dia' : 'dias'}` : d === 0 ? 'Vence hoje' : `Faltam ${-d} ${d === -1 ? 'dia' : 'dias'}`; };
@@ -1877,7 +1888,7 @@ async function detalheNFe(n, depois) {
     <p id="dSefaz" class="dica" hidden></p>
     ${podeCancelar && horas > 24 ? '<p class="dica">Esta nota foi emitida há mais de 24 horas: a SEFAZ-BA pode recusar o cancelamento comum. Se recusar, fale com o contador.</p>' : ''}`,
     'Fechar', null, () => {
-      $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('#dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
+      $('.fundo-dialogo:last-child .dialogo').classList.add('largo'); $('.fundo-dialogo:last-child #dCancela').remove(); // só "Fechar" (evita confundir com "Cancelar NF-e")
       if ($('#dDanfe')) $('#dDanfe').onclick = async () => { try { const x = await ok(sb.from('nfe').select('xml').eq('id', n.id).single()); await danfePDF(x.xml); } catch (e) { falhou(e); } };
       if ($('#dConcluir')) $('#dConcluir').onclick = async () => { try { const x = await ok(sb.from('nfe').select('dados').eq('id', n.id).single()); if (!x.dados?.v) return aviso('Rascunho sem os dados da nota.', true); $('.fundo-dialogo:last-child').remove(); emitirNFe(x.dados.v, depois, x.dados.itens, { id: n.id, dados: x.dados }); } catch (e) { falhou(e); } };
       if ($('#dExcluirR')) $('#dExcluirR').onclick = async () => { if (!confirm('Excluir este rascunho de NF-e? (Ele nunca foi enviado à SEFAZ.)')) return; try { await ok(sb.rpc('nfe_rascunho_excluir', { p_id: n.id })); $('.fundo-dialogo:last-child').remove(); aviso('Rascunho excluído.'); depois && depois(); } catch (e) { falhou(e); } };
