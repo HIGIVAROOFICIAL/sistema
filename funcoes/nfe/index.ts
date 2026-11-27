@@ -22,9 +22,21 @@ async function certificado(): Promise<Cert> {
   if (CERT) return CERT;
   const b64 = Deno.env.get("NFE_PFX_B64"), senha = Deno.env.get("NFE_PFX_SENHA");
   if (!b64 || !senha) throw new Error("o certificado ainda não foi cadastrado no cofre (segredos NFE_PFX_B64 e NFE_PFX_SENHA)");
+  // Diagnóstico sem expor nada do certificado: tamanho do texto, se é base64 de um arquivo .pfx e o motivo da falha.
+  const limpo = b64.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(limpo)) throw new Error(`o segredo NFE_PFX_B64 não é o arquivo em texto (base64): tem ${limpo.length} caracteres e caracteres inválidos. Refaça o passo do PowerShell e cole de novo.`);
+  const der = forge.util.decode64(limpo);
+  if (der.length < 1000 || der.charCodeAt(0) !== 0x30) throw new Error(`o segredo NFE_PFX_B64 não parece um arquivo .pfx (tem ${der.length} bytes). Confira se o comando do PowerShell achou o arquivo certo.`);
+  let asn;
+  try { asn = forge.asn1.fromDer(der); } catch { throw new Error(`o arquivo do cofre está incompleto ou corrompido (${der.length} bytes). Copie e cole de novo.`); }
   let p12;
-  try { p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.decode64(b64.replace(/\s+/g, ""))), false, senha); }
-  catch { throw new Error("não consegui abrir o certificado: confira o arquivo e a senha cadastrados no cofre"); }
+  try { p12 = forge.pkcs12.pkcs12FromAsn1(asn, false, senha); }
+  catch (e) {
+    const m = String((e as Error)?.message || e);
+    if (/MAC could not be verified|Invalid password/i.test(m)) throw new Error("a senha NFE_PFX_SENHA não confere com o arquivo .pfx. Confira a senha (maiúsculas, minúsculas e espaços).");
+    if (/Unsupported OID|PBE|cipher|algorithm/i.test(m)) throw new Error("o arquivo .pfx foi exportado com uma criptografia que o servidor não abre (AES256). Exporte de novo escolhendo a criptografia TripleDES-SHA1. Detalhe: " + m.slice(0, 120));
+    throw new Error("não consegui abrir o certificado. Detalhe técnico: " + m.slice(0, 160));
+  }
   const O = forge.pki.oids;
   const chaves = [...(p12.getBags({ bagType: O.pkcs8ShroudedKeyBag })[O.pkcs8ShroudedKeyBag] || []), ...(p12.getBags({ bagType: O.keyBag })[O.keyBag] || [])];
   const certs = (p12.getBags({ bagType: O.certBag })[O.certBag] || []).map((b) => b.cert).filter(Boolean) as forge.pki.Certificate[];
